@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.DS_Store
+.env
+backend/.venv/
+frontend/node_modules/
+frontend/.next/

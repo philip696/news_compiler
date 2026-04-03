@@ -1,0 +1,115 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Clean feed architecture with left to right algorithm flow">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f7faff"/>
+      <stop offset="100%" stop-color="#f6fff8"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f8fbff"/>
+    </linearGradient>
+    <style>
+      .title { font: 700 48px 'Segoe UI', Arial, sans-serif; fill: #1b2f4d; }
+      .subtitle { font: 400 21px 'Segoe UI', Arial, sans-serif; fill: #486281; }
+      .laneTitle { font: 700 24px 'Segoe UI', Arial, sans-serif; fill: #1f3556; }
+      .stage { font: 700 22px 'Segoe UI', Arial, sans-serif; fill: #1f3556; }
+      .text { font: 400 17px 'Segoe UI', Arial, sans-serif; fill: #375374; }
+      .small { font: 600 14px 'Segoe UI', Arial, sans-serif; fill: #194066; }
+      .panel { fill: #ffffff; stroke: #d8e3f2; stroke-width: 2; rx: 18; }
+      .card { fill: url(#card); stroke: #a8bedb; stroke-width: 2; rx: 18; }
+      .dbCard { fill: #edf5ff; stroke: #b4c8e6; stroke-width: 2; rx: 18; }
+      .apiCard { fill: #ecf9f0; stroke: #add7bb; stroke-width: 2; rx: 12; }
+      .loopCard { fill: #fff7ec; stroke: #e3cb99; stroke-width: 2; rx: 14; }
+      .arrow { stroke: #3d649e; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .smallArrowLine { stroke: #3d649e; stroke-width: 2; fill: none; marker-end: url(#smallArrow); }
+      .dashed { stroke-dasharray: 10 8; }
+    </style>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto">
+      <path d="M0,0 L14,7 L0,14 z" fill="#3d649e"/>
+    </marker>
+    <marker id="smallArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3d649e"/>
+    </marker>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+
+  <text x="68" y="82" class="title">Algorithm Feed Architecture</text>
+  <text x="68" y="118" class="subtitle">Loops clockwise: Database -> Backend API -> Ranking Service -> Frontend -> Event Loop -> Database</text>
+
+  <rect x="50" y="145" width="1820" height="340" class="panel"/>
+  <rect x="50" y="515" width="1820" height="500" class="panel"/>
+
+  <text x="960" y="184" class="laneTitle" text-anchor="middle">Primary Flow</text>
+  <text x="960" y="554" class="laneTitle" text-anchor="middle">Algorithm Loop Feedback</text>
+
+  <rect x="90" y="210" width="310" height="245" class="dbCard"/>
+  <text x="114" y="260" class="stage">1. Database</text>
+  <text x="114" y="300" class="text">Algorithm state</text>
+  <text x="114" y="335" class="text">Profiles, likes, bookmarks</text>
+  <text x="114" y="370" class="text">Interaction history</text>
+
+  <rect x="430" y="235" width="310" height="220" class="card"/>
+  <text x="454" y="280" class="stage">2. Backend API</text>
+  <text x="454" y="320" class="text">Reads and writes database</text>
+  <text x="454" y="355" class="text">Serves feed APIs</text>
+
+  <rect x="770" y="210" width="310" height="245" class="card"/>
+  <text x="794" y="260" class="stage">3. Ranking Service</text>
+  <text x="794" y="300" class="text">Scores candidate stories</text>
+  <text x="794" y="335" class="text">Builds ranked response</text>
+
+  <rect x="1150" y="210" width="660" height="245" class="card"/>
+  <text x="1174" y="260" class="stage">4. User Frontend</text>
+  <text x="1174" y="300" class="text">Displays personalized feed to the user</text>
+  <text x="1174" y="335" class="text">Provides UI for clicks, reading, and behaviors</text>
+
+  <rect x="430" y="190" width="310" height="28" class="apiCard"/>
+  <text x="585" y="209" class="small" text-anchor="middle">External News API Container</text>
+
+  <!-- Horizontal Arrows for Top Row -->
+  <path d="M400 332 L426 332" class="arrow"/>
+  <path d="M740 332 L766 332" class="arrow"/>
+  <path d="M1080 332 L1146 332" class="arrow"/>
+  <!-- Arrow from News API down to Backend API -->
+  <path d="M585 218 L585 231" class="smallArrowLine dashed"/>
+
+  <!-- BOTTOM ROW: E(Left) <- D <- C <- B <- A(Right) -->
+  <rect x="90" y="610" width="310" height="330" class="loopCard"/>
+  <text x="114" y="660" class="stage">E. Save to Database</text>
+  <text x="114" y="700" class="text">Persist algorithm updates</text>
+  <text x="114" y="735" class="text">Store profile and reactions</text>
+
+  <rect x="430" y="610" width="310" height="330" class="loopCard"/>
+  <text x="454" y="660" class="stage">D. Refresh Feed</text>
+  <text x="454" y="700" class="text">Request updated ranking</text>
+  <text x="454" y="735" class="text">Render new feed</text>
+
+  <rect x="770" y="610" width="310" height="330" class="loopCard"/>
+  <text x="794" y="660" class="stage">C. Send to API</text>
+  <text x="794" y="700" class="text">Post event to backend</text>
+  <text x="794" y="735" class="text">Validate and process</text>
+
+  <rect x="1150" y="610" width="310" height="330" class="loopCard"/>
+  <text x="1174" y="660" class="stage">B. Create Event</text>
+  <text x="1174" y="700" class="text">Build behavior payload</text>
+  <text x="1174" y="735" class="text">Add user and article ids</text>
+
+  <rect x="1500" y="610" width="310" height="330" class="loopCard"/>
+  <text x="1524" y="660" class="stage">A. Track Action</text>
+  <text x="1524" y="700" class="text">Capture click/read/like</text>
+  <text x="1524" y="735" class="text">Capture bookmark/skip</text>
+
+  <!-- Horizontal Arrows for Bottom Row (Right to Left) -->
+  <path d="M1500 775 L1464 775" class="arrow"/>
+  <path d="M1150 775 L1084 775" class="arrow"/>
+  <path d="M770 775 L744 775" class="arrow"/>
+  <path d="M430 775 L404 775" class="arrow"/>
+
+  <!-- Vertical Loop Arrows -->
+  <path d="M1655 455 L1655 606" class="arrow dashed"/>
+  <path d="M245 610 L245 459" class="arrow dashed"/>
+
+  <rect x="70" y="1032" width="1780" height="28" rx="8" fill="#ffffff" stroke="#d4e0f1"/>
+  <text x="960" y="1051" class="small" text-anchor="middle">Clear structural flow: Top Serving sequence seamlessly loops into Bottom Learning sequence.</text>
+</svg>

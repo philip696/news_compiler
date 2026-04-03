@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.local
+__pycache__/
+*.db
+*.sqlite
+*.sqlite3
+node_modules/
+.next/
+dist/
+build/
+.vercel/
+.pytest_cache/
+.venv
+venv/
+data/webhose_sample/
+data/geb.db
