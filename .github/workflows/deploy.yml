@@ -1,0 +1,29 @@
+name: Auto Deploy to Railway
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trigger Railway Deployment
+        run: |
+          RAILWAY_TOKEN=${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID=${{ secrets.RAILWAY_PROJECT_ID }}
+          SERVICE_ID=${{ secrets.RAILWAY_SERVICE_ID }}
+          
+          curl -X POST https://api.railway.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
+            -d '{
+              "query": "mutation { triggerDeploy(input: { projectId: \"'$PROJECT_ID'\", serviceId: \"'$SERVICE_ID'\" }) { id status } }"
+            }'
+
+      - name: Deployment Triggered
+        run: echo "Railway deployment triggered automatically! 🚀"
