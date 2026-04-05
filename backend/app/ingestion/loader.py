@@ -3,6 +3,7 @@
 import json
 import uuid
 import random
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 import hashlib
@@ -232,8 +233,11 @@ def ingest_kaggle_dataset() -> int:
         # First pass: collect articles by category (only TOP_CATEGORIES)
         articles_by_category_temp = {}
         processed = 0
+        matched = 0
         
-        print("📊 Scanning Kaggle dataset for top categories...")
+        print(f"📊 Scanning Kaggle dataset for top categories...", flush=True)
+        sys.stdout.flush()
+        
         with open(kaggle_path, 'r', encoding='utf-8', errors='ignore') as f:
             for line_num, line in enumerate(f):
                 if line.strip():
@@ -246,6 +250,8 @@ def ingest_kaggle_dataset() -> int:
                         # Only process top categories
                         if kaggle_category not in TOP_CATEGORIES:
                             continue
+                        
+                        matched += 1
                         
                         # Initialize category if not seen
                         if kaggle_category not in articles_by_category_temp:
@@ -312,15 +318,18 @@ def ingest_kaggle_dataset() -> int:
                         articles_by_category_temp[kaggle_category].append(article)
                         
                         if (line_num + 1) % 50000 == 0:
-                            print(f"  📈 Scanned {line_num + 1} articles from Kaggle...")
+                            print(f"  📈 Scanned {line_num + 1} articles from Kaggle... (matched: {matched})", flush=True)
+                            sys.stdout.flush()
                     
                     except Exception as e:
                         pass  # Skip malformed lines
         
-        print(f"✅ Scanned {processed} Kaggle articles, found {len(articles_by_category_temp)} top categories")
+        print(f"✅ Scanned {processed} total Kaggle articles, matched {matched} in top categories, found {len(articles_by_category_temp)} categories", flush=True)
+        sys.stdout.flush()
         
         # Second pass: select 100 random from each top category
-        print(f"\n🎲 Selecting 100 random articles from {len(TOP_CATEGORIES)} top categories...")
+        print(f"🎲 [Phase 2B] Selecting 100 random articles from {len(TOP_CATEGORIES)} top categories...", flush=True)
+        sys.stdout.flush()
         inserted = 0
         
         for category in TOP_CATEGORIES:
@@ -347,14 +356,16 @@ def ingest_kaggle_dataset() -> int:
                     state.articles_by_category[category].append(article)
                     inserted += 1
             
-            print(f"  ✓ {category}: {num_to_select} articles selected")
+            print(f"  ✓ {category}: {num_to_select} articles selected", flush=True)
         
-        print(f"\n✅ Loaded {inserted} total articles from Kaggle dataset")
+        print(f"✅ Loaded {inserted} total articles from Kaggle dataset", flush=True)
+        sys.stdout.flush()
         return inserted
     except Exception as e:
-        print(f"❌ Error loading Kaggle dataset: {e}")
+        print(f"❌ Error loading Kaggle dataset: {e}", flush=True)
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
         return 0
 
 
