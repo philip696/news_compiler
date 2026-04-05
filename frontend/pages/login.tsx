@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuthStore } from '../store/auth';
+import { api } from '../services/api';
 
 export default function Login() {
   const [formData, setFormData] = useState({ username: '', password: '' });
@@ -20,33 +21,17 @@ export default function Login() {
     setError('');
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: formData.username,
-          password: formData.password,
-        }),
+      const response = await api.post('/api/auth/login', {
+        username: formData.username,
+        password: formData.password,
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        
-        // Handle Pydantic validation errors
-        if (Array.isArray(data.detail)) {
-          const errorMessages = data.detail.map((err: any) => err.msg || String(err)).join(', ');
-          throw new Error(errorMessages);
-        }
-        
-        throw new Error(typeof data.detail === 'string' ? data.detail : 'Login failed');
-      }
-
-      const data = await response.json();
+      const data = response.data;
       setAuth(data.access_token, 1, formData.username);
       
       router.push('/');
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      setError(err.response?.data?.detail || err.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
