@@ -28,23 +28,46 @@ type Props = {
 };
 
 const getLogoPath = (sourceId: string): string => {
+  const normalized = sourceId.toLowerCase().trim();
+  
+  // Local logo map for known sources
   const logoMap: { [key: string]: string } = {
     "techcrunch": "/images/logos/tech_crunch.png",
-    "techcrunch.com": "/images/logos/tech_crunch.png",
-    "bbc": "/images/logos/wired.png",  // Fallback placeholder
-    "bbc.com": "/images/logos/wired.png",
+    "bbc": "/images/logos/wired.png",
     "cnn": "/images/logos/cnn.png",
-    "cnn.com": "/images/logos/cnn.png",
     "reuters": "/images/logos/reuters.png",
-    "reuters.com": "/images/logos/reuters.png",
     "theverge": "/images/logos/theverge.jpg",
-    "theverge.com": "/images/logos/theverge.jpg",
     "wired": "/images/logos/wired.png",
-    "wired.com": "/images/logos/wired.png",
   };
-  const normalized = sourceId.toLowerCase().trim();
-  // Try direct match first, then try adding .com
-  return logoMap[normalized] || logoMap[`${normalized}.com`] || `https://logo.clearbit.com/${normalized}.com?size=400`;
+  
+  // Extract domain name from various formats
+  let domainForClearbit = normalized;
+  
+  // If it's a full domain (contains dots), use as-is for Clearbit
+  if (normalized.includes(".")) {
+    // Already a domain like "finance.yahoo.com" - use directly
+    domainForClearbit = normalized;
+  } else {
+    // Single word like "techcrunch" - check map first
+    if (logoMap[normalized]) {
+      return logoMap[normalized];
+    }
+    // Otherwise try to look it up with .com for Clearbit
+    domainForClearbit = `${normalized}.com`;
+  }
+  
+  // For known single-word sources, use local files
+  if (logoMap[normalized]) {
+    return logoMap[normalized];
+  }
+  
+  // Ignore generic/invalid source names
+  if (normalized === "www" || normalized === "unknown" || normalized === "" || normalized.length < 3) {
+    return "/images/logos/wired.png"; // Use wired as generic fallback
+  }
+  
+  // Use Clearbit API for everything else
+  return `https://logo.clearbit.com/${domainForClearbit}?size=400`;
 };
 
 export default function ArticleCard({ 
