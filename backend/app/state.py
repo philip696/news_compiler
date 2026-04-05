@@ -54,8 +54,6 @@ clusters: dict[str, dict[str, Any]] = {}
 article_popularity: dict[str, int] = {}
 available_categories: list[str] = []
 articles_by_category: dict[str, list[dict[str, Any]]] = {}
-available_categories: list[str] = []
-articles_by_category: dict[str, list[dict[str, Any]]] = {}
 
 
 def now_utc() -> datetime:

@@ -86,15 +86,25 @@ def startup_event():
     # Defer expensive clustering to background task
     try:
         import threading
+        import traceback
+        
         def cluster_in_background():
-            print("🔄 Starting background clustering...")
-            build_story_clusters()
-            print(f"✅ Clustering complete: {len(state.clusters)} clusters")
+            try:
+                print("🔄 Starting background clustering...")
+                build_story_clusters()
+                print(f"✅ Clustering complete: {len(state.clusters)} clusters")
+            except Exception as e:
+                print(f"❌ CRITICAL: Background clustering failed!")
+                print(f"Error: {e}")
+                traceback.print_exc()
+                print("App will continue running without clusters")
         
         cluster_thread = threading.Thread(target=cluster_in_background, daemon=True)
         cluster_thread.start()
     except Exception as e:
         print(f"⚠️  Background clustering setup failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.get("/")
