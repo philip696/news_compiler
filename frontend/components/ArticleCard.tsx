@@ -28,14 +28,22 @@ type Props = {
 };
 
 const getLogoPath = (sourceId: string): string => {
+  // Map source domain to logo URL
+  // Since logo files don't exist, we'll use placeholder service
   const logoMap: { [key: string]: string } = {
-    "techcrunch": "public/icons/images/logos/techcrunch.png",
-    "bbc": "public/icons/images/logos/bbc.png",
-    "cnn": "public/icons/images/logos/cnn.png",
-    "reuters": "public/icons/images/logos/reuters.png",
-    "theverge": "public/icons/images/logos/theverge.jpg",
+    "techcrunch": "https://logo.clearbit.com/techcrunch.com",
+    "bbc": "https://logo.clearbit.com/bbc.com",
+    "cnn": "https://logo.clearbit.com/cnn.com",
+    "reuters": "https://logo.clearbit.com/reuters.com",
+    "theverge": "https://logo.clearbit.com/theverge.com",
+    "yahoo": "https://logo.clearbit.com/yahoo.com",
+    "finance.yahoo": "https://logo.clearbit.com/finance.yahoo.com",
+    "yahoofinance": "https://logo.clearbit.com/finance.yahoo.com",
+    "wired": "https://logo.clearbit.com/wired.com",
   };
-  return logoMap[sourceId.toLowerCase()] || `/images/logos/${sourceId.toLowerCase()}.png`;
+  
+  const normalizedId = sourceId.toLowerCase();
+  return logoMap[normalizedId] || `https://logo.clearbit.com/${normalizedId.replace(/_/g, ".")}.com`;
 };
 
 export default function ArticleCard({ 
