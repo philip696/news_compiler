@@ -11,6 +11,7 @@ interface BookmarkedArticle {
   url: string;
   source_name: string;
   cluster_id: string;
+  published_at: string;
 }
 
 const getLogoPath = (sourceName: string): string => {
