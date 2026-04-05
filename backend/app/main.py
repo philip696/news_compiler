@@ -24,18 +24,12 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
-# Configure CORS for both local development and production
-# Allow localhost in dev and all Vercel deployments
+# Configure CORS - temporarily use wildcard for development to debug
+# This allows any origin to access the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
-    ],
-    allow_origin_regex=r"https://.*\.vercel\.app.*",  # Match any Vercel domain (prod & preview)
-    allow_credentials=True,
+    allow_origins=["*"],  # Simplified for debugging - allows all origins
+    allow_credentials=False,  # Required to be False when using allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
