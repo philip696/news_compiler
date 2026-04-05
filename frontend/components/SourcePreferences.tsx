@@ -1,3 +1,5 @@
+import { BASE_URL } from "../services/api";
+
 type Props = {
   sourceIds: string[];
   onMute: (sourceId: string) => Promise<void>;
@@ -5,14 +7,18 @@ type Props = {
 };
 
 const getLogoPath = (sourceId: string): string => {
+  const normalized = sourceId.toLowerCase().trim();
   const logoMap: { [key: string]: string } = {
-    "techcrunch": "/images/logos/techcrunch.png",
-    "bbc": "/images/logos/bbc.png",
-    "cnn": "/images/logos/cnn.png",
-    "reuters": "/images/logos/reuters.png",
-    "theverge": "/images/logos/theverge.jpg",
+    "techcrunch": "tech_crunch.png",
+    "bbc": "wired.png",
+    "cnn": "cnn.png",
+    "reuters": "reuters.png",
+    "theverge": "theverge.jpg",
+    "wired": "wired.png",
   };
-  return logoMap[sourceId] || `/images/logos/${sourceId}.png`;
+  const baseName = normalized.split('.')[0];
+  const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
+  return `${BASE_URL}/data/logos/${filename}`;
 };
 
 export default function SourcePreferences({ sourceIds, onMute, onPrefer }: Props) {

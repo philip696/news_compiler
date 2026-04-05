@@ -32,32 +32,32 @@ const getLogoPath = (sourceId: string): string => {
   
   // Map source names to logo files in backend /data/logos directory
   const logoMap: { [key: string]: string } = {
-    "techcrunch": "/data/logos/tech_crunch.png",
-    "bbc": "/data/logos/wired.png",
-    "cnn": "/data/logos/cnn.png",
-    "reuters": "/data/logos/reuters.png",
-    "theverge": "/data/logos/theverge.jpg",
-    "wired": "/data/logos/wired.png",
+    "techcrunch": "tech_crunch.png",
+    "bbc": "wired.png",
+    "cnn": "cnn.png",
+    "reuters": "reuters.png",
+    "theverge": "theverge.jpg",
+    "wired": "wired.png",
   };
   
   // Check all variants of the source name
   if (logoMap[normalized]) {
-    return logoMap[normalized];
+    return `${BASE_URL}/data/logos/${logoMap[normalized]}`;
   }
   
   // Try without domain suffix
   const baseName = normalized.split('.')[0];
   if (logoMap[baseName]) {
-    return logoMap[baseName];
+    return `${BASE_URL}/data/logos/${logoMap[baseName]}`;
   }
   
   // Ignore generic/invalid source names
   if (normalized === "www" || normalized === "unknown" || normalized === "" || normalized.length < 3) {
-    return "/data/logos/wired.png"; // Use wired as generic fallback
+    return `${BASE_URL}/data/logos/wired.png`; // Use wired as generic fallback
   }
   
   // Default fallback
-  return "/data/logos/wired.png";
+  return `${BASE_URL}/data/logos/wired.png`;
 };
 
 export default function ArticleCard({ 

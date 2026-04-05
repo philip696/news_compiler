@@ -1,6 +1,6 @@
 import { useRouter } from "next/router";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../services/api";
+import { api, BASE_URL } from "../services/api";
 import { useAuthStore } from "../store/auth";
 import { useProtectedRoute } from "../hooks/useProtectedRoute";
 import ArticleCard from "../components/ArticleCard";
@@ -15,16 +15,18 @@ interface BookmarkedArticle {
 }
 
 const getLogoPath = (sourceName: string): string => {
-  const normalized = sourceName.toLowerCase();
+  const normalized = sourceName.toLowerCase().trim();
   const logoMap: { [key: string]: string } = {
-    "techcrunch": "/images/logos/tech_crunch.png",
-    "bbc": "/images/logos/bbc.png",
-    "cnn": "/images/logos/cnn.png",
-    "reuters": "/images/logos/reuters.png",
-    "the verge": "/images/logos/theverge.jpg",
-    "theverge": "/images/logos/theverge.jpg",
+    "techcrunch": "tech_crunch.png",
+    "bbc": "wired.png",
+    "cnn": "cnn.png",
+    "reuters": "reuters.png",
+    "the verge": "theverge.jpg",
+    "theverge": "theverge.jpg",
+    "wired": "wired.png",
   };
-  return logoMap[normalized] || `/images/logos/${normalized.replace(/[^a-z0-9]/g, '')}.png`;
+  const filename = logoMap[normalized] || "wired.png";
+  return `${BASE_URL}/data/logos/${filename}`;
 };
 
 export default function ProfilePage() {
