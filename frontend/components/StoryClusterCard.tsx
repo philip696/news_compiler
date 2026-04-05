@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import { Story } from "../hooks/useFeed";
-import { api, BASE_URL } from "../services/api";
+import { api, BASE_URL, joinUrl } from "../services/api";
 
 type Size = "compact" | "regular" | "featured";
 
@@ -26,7 +26,7 @@ const getLogoPath = (sourceId: string): string => {
   };
   const baseName = normalized.split('.')[0];
   const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
-  return `${BASE_URL}/data/logos/${filename}`;
+  return joinUrl(`/data/logos/${filename}`);}
 };
 
 export default function StoryClusterCard({ story, onBookmark, onLike, size = "regular", className = "" }: Props) {

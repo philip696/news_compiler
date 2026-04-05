@@ -1,6 +1,6 @@
 import { useRouter } from "next/router";
 import { useQuery } from "@tanstack/react-query";
-import { api, BASE_URL } from "../services/api";
+import { api, BASE_URL, joinUrl } from "../services/api";
 import { useAuthStore } from "../store/auth";
 import { useProtectedRoute } from "../hooks/useProtectedRoute";
 import ArticleCard from "../components/ArticleCard";
@@ -26,7 +26,7 @@ const getLogoPath = (sourceName: string): string => {
     "wired": "wired.png",
   };
   const filename = logoMap[normalized] || "wired.png";
-  return `${BASE_URL}/data/logos/${filename}`;
+  return joinUrl(`/data/logos/${filename}`);
 };
 
 export default function ProfilePage() {

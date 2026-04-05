@@ -1,4 +1,4 @@
-import { BASE_URL } from "../services/api";
+import { BASE_URL, joinUrl } from "../services/api";
 
 type Props = {
   sourceIds: string[];
@@ -18,7 +18,7 @@ const getLogoPath = (sourceId: string): string => {
   };
   const baseName = normalized.split('.')[0];
   const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
-  return `${BASE_URL}/data/logos/${filename}`;
+  return joinUrl(`/data/logos/${filename}`);
 };
 
 export default function SourcePreferences({ sourceIds, onMute, onPrefer }: Props) {

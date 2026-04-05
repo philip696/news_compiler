@@ -1,7 +1,7 @@
 import { useRouter } from "next/router";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, BASE_URL } from "../../services/api";
+import { api, BASE_URL, joinUrl } from "../../services/api";
 import { useAuthStore } from "../../store/auth";
 import { useProtectedRoute } from "../../hooks/useProtectedRoute";
 
@@ -34,7 +34,7 @@ const getLogoPath = (sourceId: string): string => {
   };
   const baseName = normalized.split('.')[0];
   const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
-  return `${BASE_URL}/data/logos/${filename}`;
+  return joinUrl(`/data/logos/${filename}`);
 };
 
 export default function ArticlePage() {
@@ -216,7 +216,7 @@ export default function ArticlePage() {
             {article.main_image ? (
               <>
                 <img
-                  src={article.main_image.startsWith('/data') ? `${BASE_URL}${article.main_image}` : article.main_image}
+                  src={article.main_image.startsWith('/data') ? joinUrl(article.main_image) : article.main_image}
                   alt={article.title}
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={(e) => {

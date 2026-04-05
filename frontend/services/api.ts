@@ -1,6 +1,14 @@
 import axios from "axios";
 
-export const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+export const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, ''); // Remove trailing slash
+
+// Safely join BASE_URL with a path to avoid double slashes
+export const joinUrl = (basePath: string): string => {
+  if (!basePath) return BASE_URL;
+  // Remove leading slash from path if present to avoid double slash
+  const cleanPath = basePath.startsWith('/') ? basePath.slice(1) : basePath;
+  return `${BASE_URL}/${cleanPath}`;
+};
 
 // Debug log what URL is being used
 console.log("🔧 DEBUG: NEXT_PUBLIC_API_BASE_URL =", process.env.NEXT_PUBLIC_API_BASE_URL);

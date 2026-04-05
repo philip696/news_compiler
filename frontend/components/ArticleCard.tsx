@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useRouter } from "next/router";
-import { BASE_URL } from "../services/api";
+import { BASE_URL, joinUrl } from "../services/api";
 
 export interface Article {
   id: string;
@@ -42,22 +42,22 @@ const getLogoPath = (sourceId: string): string => {
   
   // Check all variants of the source name
   if (logoMap[normalized]) {
-    return `${BASE_URL}/data/logos/${logoMap[normalized]}`;
+    return joinUrl(`/data/logos/${logoMap[normalized]}`);
   }
   
   // Try without domain suffix
   const baseName = normalized.split('.')[0];
   if (logoMap[baseName]) {
-    return `${BASE_URL}/data/logos/${logoMap[baseName]}`;
+    return joinUrl(`/data/logos/${logoMap[baseName]}`);
   }
   
   // Ignore generic/invalid source names
   if (normalized === "www" || normalized === "unknown" || normalized === "" || normalized.length < 3) {
-    return `${BASE_URL}/data/logos/wired.png`; // Use wired as generic fallback
+    return joinUrl("/data/logos/wired.png"); // Use wired as generic fallback
   }
   
   // Default fallback
-  return `${BASE_URL}/data/logos/wired.png`;
+  return joinUrl("/data/logos/wired.png");
 };
 
 export default function ArticleCard({ 
@@ -106,7 +106,7 @@ export default function ArticleCard({
   let imageUrl = article.main_image || `https://images.unsplash.com/photo-${1500000000000 + (article.id.charCodeAt(0) % 10000)}?auto=format&fit=crop&w=800&q=80`;
   
   if (imageUrl.startsWith('/data')) {
-    imageUrl = `${BASE_URL}${imageUrl}`;
+    imageUrl = joinUrl(imageUrl);
   }
 
   return (
