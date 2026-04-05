@@ -34,6 +34,9 @@ RUN chmod +x /app/start.sh
 # Copy backend code
 COPY backend/ .
 
+# Copy data directory (includes images needed for serving)
+COPY backend/data ./data
+
 # Set environment variables
 ENV PATH=/root/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
