@@ -30,44 +30,34 @@ type Props = {
 const getLogoPath = (sourceId: string): string => {
   const normalized = sourceId.toLowerCase().trim();
   
-  // Local logo map for known sources
+  // Map source names to logo files in backend /data/logos directory
   const logoMap: { [key: string]: string } = {
-    "techcrunch": "/images/logos/tech_crunch.png",
-    "bbc": "/images/logos/wired.png",
-    "cnn": "/images/logos/cnn.png",
-    "reuters": "/images/logos/reuters.png",
-    "theverge": "/images/logos/theverge.jpg",
-    "wired": "/images/logos/wired.png",
+    "techcrunch": "/data/logos/tech_crunch.png",
+    "bbc": "/data/logos/wired.png",
+    "cnn": "/data/logos/cnn.png",
+    "reuters": "/data/logos/reuters.png",
+    "theverge": "/data/logos/theverge.jpg",
+    "wired": "/data/logos/wired.png",
   };
   
-  // Extract domain name from various formats
-  let domainForClearbit = normalized;
-  
-  // If it's a full domain (contains dots), use as-is for Clearbit
-  if (normalized.includes(".")) {
-    // Already a domain like "finance.yahoo.com" - use directly
-    domainForClearbit = normalized;
-  } else {
-    // Single word like "techcrunch" - check map first
-    if (logoMap[normalized]) {
-      return logoMap[normalized];
-    }
-    // Otherwise try to look it up with .com for Clearbit
-    domainForClearbit = `${normalized}.com`;
-  }
-  
-  // For known single-word sources, use local files
+  // Check all variants of the source name
   if (logoMap[normalized]) {
     return logoMap[normalized];
   }
   
-  // Ignore generic/invalid source names
-  if (normalized === "www" || normalized === "unknown" || normalized === "" || normalized.length < 3) {
-    return "/images/logos/wired.png"; // Use wired as generic fallback
+  // Try without domain suffix
+  const baseName = normalized.split('.')[0];
+  if (logoMap[baseName]) {
+    return logoMap[baseName];
   }
   
-  // Use Clearbit API for everything else
-  return `https://logo.clearbit.com/${domainForClearbit}?size=400`;
+  // Ignore generic/invalid source names
+  if (normalized === "www" || normalized === "unknown" || normalized === "" || normalized.length < 3) {
+    return "/data/logos/wired.png"; // Use wired as generic fallback
+  }
+  
+  // Default fallback
+  return "/data/logos/wired.png";
 };
 
 export default function ArticleCard({ 
