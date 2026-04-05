@@ -92,6 +92,21 @@ export default function Login() {
               Sign up
             </Link>
           </p>
+
+          {/* Demo Credentials Box */}
+          <div className="mt-8 pt-8 border-t border-white/20">
+            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-3">Demo Account</p>
+            <div className="bg-blue-500/10 border border-blue-400/30 rounded-lg p-4 space-y-2">
+              <div>
+                <p className="text-[10px] text-blue-300 uppercase tracking-wide font-semibold">Username</p>
+                <p className="text-white font-mono text-sm">demo123@test.com</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-blue-300 uppercase tracking-wide font-semibold">Password</p>
+                <p className="text-white font-mono text-sm">demo123</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
