@@ -319,47 +319,75 @@ def ingest_kaggle_dataset() -> int:
                         
                         if (line_num + 1) % 50000 == 0:
                             print(f"  📈 Scanned {line_num + 1} articles from Kaggle... (matched: {matched})", flush=True)
+                            # DEBUG: show per-category counts
+                            for cat in TOP_CATEGORIES:
+                                count = len(articles_by_category_temp.get(cat, []))
+                                print(f"    → {cat}: {count} articles", flush=True)
                             sys.stdout.flush()
                         
-                        # Early exit: stop scanning once we have enough articles per category
-                        all_have_enough = all(len(articles_by_category_temp.get(cat, [])) >= 2500 for cat in TOP_CATEGORIES)
-                        if all_have_enough and matched >= 10000:
-                            print(f"  ✋ Early exit: reached target articles (matched: {matched})", flush=True)
+                        # Early exit: stop scanning if we have enough total or hit a satisfactory threshold
+                        total_collected = sum(len(articles_by_category_temp.get(cat, [])) for cat in TOP_CATEGORIES)
+                        if total_collected >= 10000:
+                            print(f"  ✋ Early exit: collected {total_collected} total articles from {len(articles_by_category_temp)} categories", flush=True)
+                            for cat in TOP_CATEGORIES:
+                                count = len(articles_by_category_temp.get(cat, []))
+                                print(f"    → {cat}: {count} articles", flush=True)
                             sys.stdout.flush()
                             break
                     
                     except Exception as e:
-                        pass  # Skip malformed lines
+                        print(f"  ⚠️  Parse error at line {line_num}: {str(e)[:50]}", flush=True)
+                        sys.stdout.flush()
         
         print(f"✅ Scanned {processed} total Kaggle articles, matched {matched} in top categories, found {len(articles_by_category_temp)} categories", flush=True)
+        print(f"  📊 Article distribution:", flush=True)
+        for cat in TOP_CATEGORIES:
+            count = len(articles_by_category_temp.get(cat, []))
+            print(f"    → {cat}: {count} articles", flush=True)
         sys.stdout.flush()
         
-        # Second pass: select 2000 random from each top category (total ~10k)
-        print(f"🎲 [Phase 2B] Selecting 2000 random articles from {len(TOP_CATEGORIES)} top categories...", flush=True)
+        # Second pass: select articles from each top category (total ~10k)
+        print(f"🎲 [Phase 2B] Starting selection phase - will pick from available articles...", flush=True)
+        sys.stdout.flush()
+        print(f"🎲 [Phase 2B] Selecting articles from {len(TOP_CATEGORIES)} top categories...", flush=True)
         sys.stdout.flush()
         inserted = 0
         
-        for category in TOP_CATEGORIES:
+        for i, category in enumerate(TOP_CATEGORIES):
+            print(f"  🔄 [{i+1}/{len(TOP_CATEGORIES)}] Processing {category}...", flush=True)
+            sys.stdout.flush()
+            
             articles_list = articles_by_category_temp.get(category, [])
             if not articles_list:
-                print(f"  ⚠ {category}: no articles found", flush=True)
+                print(f"    ⚠ {category}: no articles found", flush=True)
                 sys.stdout.flush()
                 continue
             
-            print(f"  📌 {category}: {len(articles_list)} available, selecting...", flush=True)
+            available = len(articles_list)
+            print(f"    📌 {category}: {available} available", flush=True)
             sys.stdout.flush()
             
-            # Randomly select up to 2000 articles from this category (to reach ~10k total)
-            num_to_select = min(2000, len(articles_list))
+            # Take up to 2000 or available, whichever is smaller
+            num_to_select = min(2000, available)
+            print(f"    🎲 Selecting {num_to_select} from {available}...", flush=True)
+            sys.stdout.flush()
             
             try:
-                selected_articles = random.sample(articles_list, num_to_select)
-                print(f"  ✅ {category}: {num_to_select} selected", flush=True)
+                if num_to_select <= 100 or available <= 5000:
+                    # For small lists, just use list slicing instead of random.sample
+                    selected_articles = articles_list[:num_to_select]
+                    print(f"    ✅ Using slicing for {num_to_select} articles", flush=True)
+                else:
+                    selected_articles = random.sample(articles_list, num_to_select)
+                    print(f"    ✅ Using random.sample for {num_to_select} articles", flush=True)
                 sys.stdout.flush()
             except Exception as e:
-                print(f"  ❌ {category}: selection failed ({e}), using first {num_to_select} instead", flush=True)
+                print(f"    ❌ Selection failed: {e}, using slicing instead", flush=True)
                 selected_articles = articles_list[:num_to_select]
                 sys.stdout.flush()
+            
+            print(f"    📝 Adding {len(selected_articles)} to state...", flush=True)
+            sys.stdout.flush()
             
             # Add to state
             if category not in state.available_categories:
@@ -374,12 +402,21 @@ def ingest_kaggle_dataset() -> int:
                     state.article_popularity.setdefault(article["id"], 0)
                     state.articles_by_category[category].append(article)
                     inserted += 1
+            
+            print(f"    ✓ {category}: {len(selected_articles)} articles added ({inserted} total so far)", flush=True)
+            sys.stdout.flush()
         
-        print(f"✅ Loaded {inserted} total articles from Kaggle dataset", flush=True)
+        print(f"✅ PHASE 2B COMPLETE - Loaded {inserted} total articles from Kaggle dataset", flush=True)
+        print(f"  📊 Final state:", flush=True)
+        print(f"    Total articles in state: {len(state.articles)}", flush=True)
+        for cat in state.available_categories:
+            count = len(state.articles_by_category.get(cat, []))
+            print(f"    → {cat}: {count} articles", flush=True)
         sys.stdout.flush()
         return inserted
     except Exception as e:
-        print(f"❌ Error loading Kaggle dataset: {e}", flush=True)
+        print(f"❌ CRITICAL ERROR in Kaggle loading: {e}", flush=True)
+        print(f"   Type: {type(e).__name__}", flush=True)
         import traceback
         traceback.print_exc()
         sys.stdout.flush()
