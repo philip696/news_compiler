@@ -4,25 +4,12 @@
     {
       "src": "frontend/package.json",
       "use": "@vercel/next"
-    },
-    {
-      "src": "backend/requirements.txt",
-      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
       "dest": "frontend/$1"
-    },
-    {
-      "src": "/api/(.*)",
-      "dest": "backend/app/main.py"
     }
-  ],
-  "env": {
-    "DATABASE_URL": "postgresql://user:password@host/dbname",
-    "CELERY_BROKER_URL": "@upstash_redis_url",
-    "CELERY_RESULT_BACKEND": "@upstash_redis_url"
-  }
+  ]
 }
