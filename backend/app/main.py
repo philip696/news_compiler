@@ -7,8 +7,6 @@ import os
 from . import state
 from .core.config import settings
 from .db import Base, engine
-from .ingestion.loader import ingest_webhose_jsonl, ingest_mock_feed, ingest_kaggle_dataset
-from .clustering.engine import build_story_clusters
 from .api.auth import router as auth_router
 from .api.user import router as user_router
 from .api.topics import router as topics_router
@@ -61,48 +59,12 @@ if data_path.exists():
 
 @app.on_event("startup")
 def startup_event():
-    """Startup tasks: ingest data synchronously, defer clustering to background."""
-    from . import state
-    
-    # Skip if already ingested (prevent re-ingestion on container restart)
-    if state.startup_complete:
-        print("✅ Startup already completed, skipping data ingestion")
-        return
-    
+    """Startup tasks with comprehensive error handling and diagnostics."""
+    from .startup import run_startup_sequence
     try:
-        ingest_mock_feed()
+        run_startup_sequence()
     except Exception as e:
-        print(f"⚠️  Mock feed ingestion failed: {e}")
-    
-    try:
-        ingest_kaggle_dataset()
-    except Exception as e:
-        print(f"⚠️  Kaggle dataset ingestion failed: {e}")
-    
-    # Mark startup as complete BEFORE clustering
-    state.startup_complete = True
-    print("✅ Data ingestion complete, deferring clustering to background")
-    
-    # Defer expensive clustering to background task
-    try:
-        import threading
-        import traceback
-        
-        def cluster_in_background():
-            try:
-                print("🔄 Starting background clustering...")
-                build_story_clusters()
-                print(f"✅ Clustering complete: {len(state.clusters)} clusters")
-            except Exception as e:
-                print(f"❌ CRITICAL: Background clustering failed!")
-                print(f"Error: {e}")
-                traceback.print_exc()
-                print("App will continue running without clusters")
-        
-        cluster_thread = threading.Thread(target=cluster_in_background, daemon=True)
-        cluster_thread.start()
-    except Exception as e:
-        print(f"⚠️  Background clustering setup failed: {e}")
+        print(f"⚠️  STARTUP HANDLER ERROR (app will continue): {e}")
         import traceback
         traceback.print_exc()
 
@@ -137,3 +99,40 @@ app.include_router(sources_router)
 app.include_router(behavior_router)
 app.include_router(admin_router)
 app.include_router(chatbot_router)
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """Graceful shutdown."""
+    print("\n" + "="*60)
+    print("🛑 SHUTDOWN SIGNAL RECEIVED")
+    print("="*60)
+    print(f"Final state: {len(state.articles)} articles, {len(state.clusters)} clusters")
+    print("="*60 + "\n")
+
+
+# Global exception handler for better error visibility
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions with logging."""
+    print(f"⚠️  HTTP {exc.status_code}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    """Handle unexpected exceptions."""
+    print(f"❌ Unexpected error: {type(exc).__name__}: {exc}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
