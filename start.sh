@@ -3,14 +3,14 @@
 
 set -e  # Exit on error
 
-echo "🚀 GEB Backend Startup Script"
+echo "🚀 GEB Backend Startup"
 echo "Port: ${PORT:-8000}"
 echo "Host: 0.0.0.0"
+echo "Working directory: $(pwd)"
 
-# Change to backend directory
-cd backend
+# App code is already in /app (from Dockerfile COPY backend/ .)
+# No need to cd - just run uvicorn from current directory
 
-# Run uvicorn with proper port handling
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port ${PORT:-8000} \
