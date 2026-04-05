@@ -30,6 +30,8 @@ allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
+    # Production Vercel deployments
+    "https://news-compiler-hyryeekca-philip696s-projects.vercel.app",
 ]
 
 # Add frontend URL from environment if specified
@@ -37,11 +39,10 @@ frontend_url = os.getenv("FRONTEND_URL")
 if frontend_url:
     allowed_origins.append(frontend_url)
 
-# Add Vercel preview deployments
+# Add Vercel preview and production deployments
 vercel_url = os.getenv("VERCEL_URL")
 if vercel_url:
     allowed_origins.append(f"https://{vercel_url}")
-    allowed_origins.append(f"http://{vercel_url}")
 
 app.add_middleware(
     CORSMiddleware,
