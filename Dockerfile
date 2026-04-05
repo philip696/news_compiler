@@ -40,8 +40,8 @@ ENV PATH=/root/.local/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1
 
 # Health check - using curl instead of httpx to avoid dependency issues
-# Increased start-period to 30s since data loading takes ~8s + server startup time
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+# Increased start-period to 120s for ~10k articles loading (5 categories * 2000 articles)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD curl -f http://127.0.0.1:8000/healthz || exit 1
 
 # Run the application via startup script

@@ -223,10 +223,10 @@ def ingest_kaggle_dataset() -> int:
         print(f"ℹ️  Kaggle dataset not found at {kaggle_path}")
         return 0
     
-    # Top categories to include (most populated, most relevant)
+    # Top 5 categories only (reduced from 10 to prevent memory issues)
+    # Focus on most relevant categories
     TOP_CATEGORIES = [
-        "POLITICS", "ENTERTAINMENT", "WORLD NEWS", "BUSINESS", 
-        "TECH", "SPORTS", "SCIENCE", "EDUCATION", "WELLNESS", "TRAVEL"
+        "POLITICS", "TECH", "BUSINESS", "SPORTS", "SCIENCE"
     ]
     
     try:
@@ -327,8 +327,8 @@ def ingest_kaggle_dataset() -> int:
         print(f"✅ Scanned {processed} total Kaggle articles, matched {matched} in top categories, found {len(articles_by_category_temp)} categories", flush=True)
         sys.stdout.flush()
         
-        # Second pass: select 100 random from each top category
-        print(f"🎲 [Phase 2B] Selecting 100 random articles from {len(TOP_CATEGORIES)} top categories...", flush=True)
+        # Second pass: select 2000 random from each top category (total ~10k)
+        print(f"🎲 [Phase 2B] Selecting 2000 random articles from {len(TOP_CATEGORIES)} top categories...", flush=True)
         sys.stdout.flush()
         inserted = 0
         
@@ -338,8 +338,8 @@ def ingest_kaggle_dataset() -> int:
                 print(f"  ⚠ {category}: no articles found")
                 continue
             
-            # Randomly select up to 100 articles from this category
-            num_to_select = min(100, len(articles_list))
+            # Randomly select up to 2000 articles from this category (to reach ~10k total)
+            num_to_select = min(2000, len(articles_list))
             selected_articles = random.sample(articles_list, num_to_select)
             
             # Add to state
