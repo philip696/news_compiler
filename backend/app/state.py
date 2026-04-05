@@ -37,6 +37,10 @@ SOURCES = {
     },
 }
 
+# Startup control
+startup_complete: bool = False
+now_utc = lambda: datetime.now(timezone.utc)
+
 users: dict[str, dict[str, Any]] = {}
 users_by_email: dict[str, str] = {}
 user_topics: dict[str, dict[str, dict[str, Any]]] = {}
@@ -48,6 +52,8 @@ reading_history: dict[str, list[dict[str, Any]]] = {}
 articles: dict[str, dict[str, Any]] = {}
 clusters: dict[str, dict[str, Any]] = {}
 article_popularity: dict[str, int] = {}
+available_categories: list[str] = []
+articles_by_category: dict[str, list[dict[str, Any]]] = {}
 available_categories: list[str] = []
 articles_by_category: dict[str, list[dict[str, Any]]] = {}
 

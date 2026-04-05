@@ -61,18 +61,40 @@ if data_path.exists():
 
 @app.on_event("startup")
 def startup_event():
+    """Startup tasks: ingest data synchronously, defer clustering to background."""
+    from . import state
+    
+    # Skip if already ingested (prevent re-ingestion on container restart)
+    if state.startup_complete:
+        print("✅ Startup already completed, skipping data ingestion")
+        return
+    
     try:
         ingest_mock_feed()
     except Exception as e:
-        print(f"Warning: Mock feed ingestion failed: {e}")
+        print(f"⚠️  Mock feed ingestion failed: {e}")
+    
     try:
         ingest_kaggle_dataset()
     except Exception as e:
-        print(f"Warning: Kaggle dataset ingestion failed: {e}")
+        print(f"⚠️  Kaggle dataset ingestion failed: {e}")
+    
+    # Mark startup as complete BEFORE clustering
+    state.startup_complete = True
+    print("✅ Data ingestion complete, deferring clustering to background")
+    
+    # Defer expensive clustering to background task
     try:
-        build_story_clusters()
+        import threading
+        def cluster_in_background():
+            print("🔄 Starting background clustering...")
+            build_story_clusters()
+            print(f"✅ Clustering complete: {len(state.clusters)} clusters")
+        
+        cluster_thread = threading.Thread(target=cluster_in_background, daemon=True)
+        cluster_thread.start()
     except Exception as e:
-        print(f"Warning: Clustering failed: {e}")
+        print(f"⚠️  Background clustering setup failed: {e}")
 
 
 @app.get("/")

@@ -37,57 +37,74 @@ def _connected_components(graph: dict[str, set[str]]) -> list[list[str]]:
 
 
 def build_story_clusters() -> int:
+    """Build story clusters: group similar articles by topic with memory-efficient approach."""
     articles = list(state.articles.values())
     if not articles:
         state.clusters = {}
         return 0
 
-    ids = [a["id"] for a in articles]
-    vectors = [a["embedding"] for a in articles]
-    
-    # Compute pairwise similarity matrix
-    sims = {}
-    for i in range(len(vectors)):
-        for j in range(len(vectors)):
-            sims[(i, j)] = _cosine_similarity(vectors[i], vectors[j])
-
-    graph = {article_id: set() for article_id in ids}
-    for i, source_id in enumerate(ids):
-        graph[source_id].add(source_id)
-        for j in range(i + 1, len(ids)):
-            target_id = ids[j]
-            article_a = state.articles[source_id]
-            article_b = state.articles[target_id]
-
-            topic_match = article_a["topic"] == article_b["topic"]
-            time_gap = abs(article_a["published_at"] - article_b["published_at"]) <= timedelta(hours=48)
-            similar = sims[(i, j)] >= settings.similarity_threshold
-
-            if topic_match and time_gap and similar:
-                graph[source_id].add(target_id)
-                graph[target_id].add(source_id)
-
-    components = _connected_components(graph)
-
     new_clusters: dict[str, dict] = {}
-    for comp in components:
-        comp_articles = [state.articles[a_id] for a_id in comp]
-        comp_articles.sort(key=lambda x: x["published_at"], reverse=True)
-        headline = comp_articles[0]["title"]
-        topic = comp_articles[0]["topic"]
-        sources = sorted({article["source_name"] for article in comp_articles})
-        summary = f"{len(comp_articles)} related articles across {len(sources)} sources"
-        cluster_id = str(uuid.uuid4())
-
-        new_clusters[cluster_id] = {
-            "cluster_id": cluster_id,
-            "topic": topic,
-            "headline": headline,
-            "summary": summary,
-            "article_ids": [a["id"] for a in comp_articles],
-            "sources": sources,
-            "created_at": comp_articles[0]["published_at"],
-        }
-
+    
+    # Cluster by topic first to reduce O(n²) comparisons
+    articles_by_topic = {}
+    for article in articles:
+        topic = article["topic"]
+        if topic not in articles_by_topic:
+            articles_by_topic[topic] = []
+        articles_by_topic[topic].append(article)
+    
+    # Process each topic independently
+    for topic, topic_articles in articles_by_topic.items():
+        if not topic_articles:
+            continue
+        
+        # Within-topic clustering: compare only articles in same topic
+        ids = [a["id"] for a in topic_articles]
+        vectors = [a["embedding"] for a in topic_articles]
+        
+        # Compute pairwise similarity matrix (only within topic)
+        sims = {}
+        for i in range(len(vectors)):
+            for j in range(i + 1, len(vectors)):
+                sims[(i, j)] = _cosine_similarity(vectors[i], vectors[j])
+        
+        # Build connectivity graph
+        graph = {article_id: set() for article_id in ids}
+        for i, source_id in enumerate(ids):
+            graph[source_id].add(source_id)
+            for j in range(i + 1, len(ids)):
+                target_id = ids[j]
+                article_a = state.articles[source_id]
+                article_b = state.articles[target_id]
+                
+                time_gap = abs(article_a["published_at"] - article_b["published_at"]) <= timedelta(hours=48)
+                similar = sims.get((i, j), 0) >= settings.similarity_threshold
+                
+                if time_gap and similar:
+                    graph[source_id].add(target_id)
+                    graph[target_id].add(source_id)
+        
+        # Extract connected components
+        components = _connected_components(graph)
+        
+        # Create clusters from components
+        for comp in components:
+            comp_articles = [state.articles[a_id] for a_id in comp]
+            comp_articles.sort(key=lambda x: x["published_at"], reverse=True)
+            headline = comp_articles[0]["title"]
+            sources = sorted({article["source_name"] for article in comp_articles})
+            summary = f"{len(comp_articles)} related articles across {len(sources)} sources"
+            cluster_id = str(uuid.uuid4())
+            
+            new_clusters[cluster_id] = {
+                "cluster_id": cluster_id,
+                "topic": topic,
+                "headline": headline,
+                "summary": summary,
+                "article_ids": [a["id"] for a in comp_articles],
+                "sources": sources,
+                "created_at": comp_articles[0]["published_at"],
+            }
+    
     state.clusters = new_clusters
     return len(new_clusters)
