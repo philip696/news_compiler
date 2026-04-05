@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import os
+import re
 
 from . import state
 from .core.config import settings
@@ -24,29 +25,16 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
 # Configure CORS for both local development and production
-# Allow localhost in dev, Vercel frontend in production
-allowed_origins = [
-    "http://127.0.0.1:3000",
-    "http://localhost:3000",
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-    # Production Vercel deployments
-    "https://news-compiler-hyryeekca-philip696s-projects.vercel.app",
-]
-
-# Add frontend URL from environment if specified
-frontend_url = os.getenv("FRONTEND_URL")
-if frontend_url:
-    allowed_origins.append(frontend_url)
-
-# Add Vercel preview and production deployments
-vercel_url = os.getenv("VERCEL_URL")
-if vercel_url:
-    allowed_origins.append(f"https://{vercel_url}")
-
+# Allow localhost in dev and all Vercel deployments
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app.*",  # Match any Vercel domain (prod & preview)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
