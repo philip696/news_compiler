@@ -212,7 +212,7 @@ export default function ArticlePage() {
           </div>
 
           {/* Featured Image */}
-          <div className="relative h-96 w-full overflow-hidden rounded-2xl bg-slate-100 mb-8">
+          <div className="relative h-96 w-full overflow-hidden rounded-2xl bg-gradient-to-br from-slate-200 to-slate-300 mb-8">
             {article.main_image ? (
               <>
                 <img
@@ -220,34 +220,47 @@ export default function ArticlePage() {
                   alt={article.title}
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={(e) => {
+                    // Hide broken image, show placeholder
                     (e.target as HTMLImageElement).style.display = 'none';
+                    const parent = (e.target as HTMLElement).parentElement;
+                    if (parent) {
+                      parent.classList.add('flex', 'items-center', 'justify-center');
+                      const placeholder = document.createElement('div');
+                      placeholder.className = 'text-center text-slate-500';
+                      placeholder.innerHTML = '<svg class="h-16 w-16 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg><p>Image not available</p>';
+                      parent.appendChild(placeholder);
+                    }
                   }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900/20 to-transparent" />
               </>
             ) : (
-              <div 
-                className="absolute inset-0 bg-cover bg-center"
-                style={{ backgroundImage: `url(https://images.unsplash.com/photo-${1500000000000 + (article.id.charCodeAt(0) % 10000)}?auto=format&fit=crop&w=1200&q=80)` }} 
-              />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-slate-500">
+                  <svg className="h-16 w-16 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <p>No image available</p>
+                </div>
+              </div>
             )}
           </div>
 
           {/* Link Snippet Box */}
-          <div className="mb-8 p-4 border border-slate-200 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors">
-            <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">Source Link</p>
-            <a
-              href={article.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 break-all"
-            >
-              <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <a
+            href={article.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block mb-8 p-4 border-2 border-slate-200 rounded-xl bg-slate-50 hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 group"
+          >
+            <p className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wide">Source Link</p>
+            <div className="flex items-center gap-2 text-blue-600 group-hover:text-blue-700">
+              <svg className="h-5 w-5 flex-shrink-0 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>
-              <span className="text-sm font-medium truncate">{article.url.replace(/^https?:\/\/(www\.)?/, '')}</span>
-            </a>
-          </div>
+              <span className="text-sm font-medium break-all group-hover:underline">{article.url.replace(/^https?:\/\/(www\.)?/, '')}</span>
+            </div>
+          </a>
 
           {/* Content */}
           <div className="prose prose-lg max-w-none text-slate-700 leading-relaxed">
