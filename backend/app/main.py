@@ -24,13 +24,28 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
-# Configure CORS - temporarily use wildcard for development to debug
-# This allows any origin to access the API
+# Build list of allowed origins dynamically
+allowed_origins = [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "https://newscompiler-production.vercel.app",  # Production Vercel
+]
+
+# Add any env-configured URL
+if frontend_url := os.getenv("FRONTEND_URL"):
+    allowed_origins.append(frontend_url)
+if vercel_url := os.getenv("VERCEL_URL"):
+    allowed_origins.append(f"https://{vercel_url}")
+
+# Configure CORS with specific origins + regex for preview domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Simplified for debugging - allows all origins
-    allow_credentials=False,  # Required to be False when using allow_origins=["*"]
-    allow_methods=["*"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.+\.vercel\.app",  # All Vercel preview domains
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
