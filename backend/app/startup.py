@@ -37,7 +37,7 @@ def setup_startup_logging():
     print(f"{'='*60}\n")
 
 
-def run_startup_sequence():
+async def run_startup_sequence():
     """Run the startup sequence with maximum resilience."""
     global_start = time.time()
     
@@ -46,7 +46,7 @@ def run_startup_sequence():
     try:
         print(f"[{time.time()-global_start:.2f}s] Importing modules...")
         from . import state
-        from .ingestion.loader import ingest_mock_feed, ingest_kaggle_dataset, ingest_yahoo_finance_articles
+        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_yahoo_finance_articles, ingest_defeatbeta_articles
         from .clustering.engine import build_story_clusters
         print(f"[{time.time()-global_start:.2f}s] ✅ Modules imported\n")
     except Exception as e:
@@ -61,10 +61,10 @@ def run_startup_sequence():
         return
     
     # Phase 1: WebHose
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/5] Loading WebHose articles...")
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/6] Loading WebHose articles...")
     phase1_start = time.time()
     try:
-        count = ingest_mock_feed()
+        count = ingest_webhose_jsonl()
         phase1_time = time.time() - phase1_start
         print(f"[{time.time()-global_start:.2f}s] ✅ WebHose: {count} articles loaded ({phase1_time:.2f}s)\n")
     except Exception as e:
@@ -73,139 +73,80 @@ def run_startup_sequence():
         import traceback
         traceback.print_exc()
     
-    # Phase 2: Yahoo Finance (PRIMARY) - Load first, use Kaggle as fallback
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/5] Loading Yahoo Finance articles (PRIMARY)...")
+    # Phase 2: DefeatBeta API (PRIMARY) - High-quality financial analysis
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/6] Loading DefeatBeta API articles (PRIMARY)...")
     phase2_start = time.time()
-    yahoo_count = 0
-    yahoo_failed = False
+    defeatbeta_count = 0
     
     try:
-        import asyncio
-        # Check if we're already in an event loop
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        
-        if loop:
-            # We're in an event loop, use sync httpx
-            from .services.news_service import NewsService
-            import httpx
-            
-            news_service = NewsService()
-            
-            try:
-                with httpx.Client(timeout=30) as client:
-                    params = {
-                        "region": "US",
-                        "lang": "en",
-                        "count": 50,
-                    }
-                    response = client.get(news_service.yahoo_finance_url, params=params)
-                    
-                    if response.status_code == 200:
-                        # Process articles
-                        data = response.json()
-                        category = "💰 Finance"
-                        
-                        if category not in state.available_categories:
-                            state.available_categories.append(category)
-                        if category not in state.articles_by_category:
-                            state.articles_by_category[category] = []
-                        
-                        for idx, item in enumerate(data.get("finance", {}).get("result", [])[:50]):
-                            try:
-                                from .ingestion.loader import classify_topic, text_to_embedding, _parse_published
-                                import uuid
-                                
-                                title = item.get("title", "").strip()
-                                content = item.get("summary", "").strip()
-                                url = item.get("link", f"https://example.local/{uuid.uuid4()}")
-                                source_name = "Yahoo Finance"
-                                published = item.get("pubDate", "")
-                                image_url = item.get("thumbnail", {}).get("url", "") if item.get("thumbnail") else ""
-                                
-                                if not title or not content:
-                                    continue
-                                
-                                combined_text = f"{title} {content}"
-                                topic, confidence = classify_topic(combined_text)
-                                embedding = text_to_embedding(combined_text)
-                                
-                                article_id = f"yahoo_finance_{yahoo_count}_{idx}"
-                                source_id = source_name.lower().replace(" ", "_")
-                                
-                                article = {
-                                    "id": article_id,
-                                    "title": title,
-                                    "content": content,
-                                    "url": url,
-                                    "source_id": source_id,
-                                    "source_name": source_name,
-                                    "published_at": _parse_published(published),
-                                    "topic": topic,
-                                    "topic_confidence": confidence,
-                                    "embedding": embedding,
-                                    "logo_url": "",
-                                    "main_image": image_url,
-                                    "category": category,
-                                }
-                                
-                                if article_id not in state.articles:
-                                    state.articles[article_id] = article
-                                    state.article_popularity.setdefault(article_id, 0)
-                                    state.articles_by_category[category].append(article)
-                                    yahoo_count += 1
-                            except Exception as e:
-                                pass
-                        
-                    else:
-                        yahoo_failed = True
-            except Exception as e:
-                yahoo_failed = True
-        else:
-            # No event loop, use asyncio.run
-            yahoo_count = asyncio.run(ingest_yahoo_finance_articles())
-    
+        defeatbeta_count = await ingest_defeatbeta_articles()
     except Exception as e:
-        yahoo_failed = True
+        phase2_time = time.time() - phase2_start
+        print(f"[{time.time()-global_start:.2f}s] ⚠️  DefeatBeta API failed after {phase2_time:.2f}s: {type(e).__name__}\n")
     
     phase2_time = time.time() - phase2_start
-    
-    if yahoo_count > 0:
-        print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance (PRIMARY): {yahoo_count} articles loaded ({phase2_time:.2f}s)")
-        print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
+    if defeatbeta_count > 0:
+        print(f"[{time.time()-global_start:.2f}s] ✅ DefeatBeta (PRIMARY): {defeatbeta_count} articles loaded ({phase2_time:.2f}s)\n")
     else:
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance (PRIMARY) delivered 0 articles ({phase2_time:.2f}s)")
-        print(f"[{time.time()-global_start:.2f}s] 📥 Falling back to Kaggle dataset...\n")
+        print(f"[{time.time()-global_start:.2f}s] ⚠️  DefeatBeta (PRIMARY) delivered 0 articles ({phase2_time:.2f}s)")
+        print(f"[{time.time()-global_start:.2f}s] 📥 Falling back to Yahoo Finance and Kaggle...\n")
     
-    # Phase 3: Kaggle (FALLBACK - only if Yahoo Finance didn't deliver enough)
-    if yahoo_count < 100:  # If Yahoo Finance didn't provide substantial data
-        print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/5] Loading Kaggle dataset (FALLBACK)...")
+    # Phase 3: Yahoo Finance API (SECONDARY) - if DefeatBeta delivered < 100 articles
+    if defeatbeta_count < 100:
+        print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/6] Loading Yahoo Finance articles (SECONDARY)...")
         phase3_start = time.time()
+        yahoo_count = 0
+        
         try:
-            kaggle_count = ingest_kaggle_dataset()
-            phase3_time = time.time() - phase3_start
-            total_loaded = yahoo_count + kaggle_count
-            print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle (FALLBACK): {kaggle_count} articles loaded ({phase3_time:.2f}s)")
-            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}")
-            print(f"[{time.time()-global_start:.2f}s]    → Yahoo Finance: {yahoo_count} | Kaggle: {kaggle_count}\n")
+            yahoo_count = await ingest_yahoo_finance_articles()
         except Exception as e:
             phase3_time = time.time() - phase3_start
-            print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle fallback failed after {phase3_time:.2f}s: {type(e).__name__}: {e}\n")
+            print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance API failed after {phase3_time:.2f}s: {type(e).__name__}\n")
+        
+        phase3_time = time.time() - phase3_start
+        if yahoo_count > 0:
+            print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance (SECONDARY): {yahoo_count} articles loaded ({phase3_time:.2f}s)")
+            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
+        else:
+            print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance (SECONDARY) delivered 0 articles ({phase3_time:.2f}s)")
+            print(f"[{time.time()-global_start:.2f}s] 📥 Falling back to Kaggle dataset...\n")
+            yahoo_count = 0
+    else:
+        print(f"[{time.time()-global_start:.2f}s] ✅ DefeatBeta (PRIMARY) delivered sufficient data ({defeatbeta_count} articles)")
+        print(f"[{time.time()-global_start:.2f}s] ⏭️  Skipping Yahoo Finance SECONDARY phase")
+        print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
+        yahoo_count = 0
+    
+    # Phase 4: Kaggle (FALLBACK - only if DefeatBeta + Yahoo Finance didn't deliver enough)
+    total_real_sources = defeatbeta_count + yahoo_count
+    if total_real_sources < 200:  # If real sources didn't provide substantial data
+        print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 4/6] Loading Kaggle dataset (FALLBACK)...")
+        phase4_start = time.time()
+        kaggle_count = 0
+        try:
+            kaggle_count = ingest_kaggle_dataset()
+            phase4_time = time.time() - phase4_start
+            total_loaded = defeatbeta_count + yahoo_count + kaggle_count
+            print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle (FALLBACK): {kaggle_count} articles loaded ({phase4_time:.2f}s)")
+            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}")
+            print(f"[{time.time()-global_start:.2f}s]    → DefeatBeta: {defeatbeta_count} | Yahoo Finance: {yahoo_count} | Kaggle: {kaggle_count}\n")
+        except Exception as e:
+            phase4_time = time.time() - phase4_start
+            print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle fallback failed after {phase4_time:.2f}s: {type(e).__name__}: {e}\n")
             import traceback
             traceback.print_exc()
     else:
-        print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance (PRIMARY) delivered sufficient data ({yahoo_count} articles)")
+        print(f"[{time.time()-global_start:.2f}s] ✅ Real sources (DefeatBeta + Yahoo) delivered sufficient data ({total_real_sources} articles)")
         print(f"[{time.time()-global_start:.2f}s] ⏭️  Skipping Kaggle fallback phase\n")
     
-    # Mark startup complete
-    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 4/5] Startup checkpoint saved")
+    # Phase 5: Startup checkpoint - mark startup complete
+    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 5/6] Startup checkpoint saved")
     state.startup_complete = True
-    print(f"[{time.time()-global_start:.2f}s] 💾 state.startup_complete = True\n")
+    print(f"[{time.time()-global_start:.2f}s] 💾 state.startup_complete = True")
+    print(f"[{time.time()-global_start:.2f}s] 📊 Articles loaded: {len(state.articles)} across {len(state.available_categories)} categories\n")
     
-    # Phase 5: Background clustering (non-blocking)
-    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 5/5] Starting background clustering...")
+    # Phase 6: Background clustering (non-blocking)
+    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 6/6] Starting background clustering...")
     try:
         import threading
         

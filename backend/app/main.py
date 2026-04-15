@@ -61,11 +61,11 @@ if data_path.exists():
 
 
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     """Startup tasks with comprehensive error handling and diagnostics."""
     from .startup import run_startup_sequence
     try:
-        run_startup_sequence()
+        await run_startup_sequence()
     except Exception as e:
         print(f"⚠️  STARTUP HANDLER ERROR (app will continue): {e}")
         import traceback

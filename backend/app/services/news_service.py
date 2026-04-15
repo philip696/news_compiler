@@ -115,7 +115,7 @@ SYNTHETIC_FINANCE_NEWS = [
 
 
 class NewsService:
-    """Service to fetch news from Yahoo Finance and other news sources."""
+    """Service to fetch news from Yahoo Finance, DefeatBeta API, and other sources."""
     
     def __init__(self):
         self.timeout = 30
@@ -123,8 +123,83 @@ class NewsService:
         self.retry_delay = 1  # seconds
         # Yahoo Finance API endpoint
         self.yahoo_finance_url = "https://query1.finance.yahoo.com/v10/finance/news"
+        # DefeatBeta API endpoints
+        self.defeatbeta_api_url = "https://defeatbeta.io/api"
+        self.defeatbeta_news_url = "https://defeatbeta.io/api/news"
+        self.defeatbeta_earnings_url = "https://defeatbeta.io/api/earnings"
+        # NewsAPI fallback
         self.news_api_url = "https://newsapi.org/v2/top-headlines"
         self.news_api_key = "demo"  # Free tier key
+    
+    async def get_defeatbeta_news(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Fetch financial analysis and earnings data from DefeatBeta API."""
+        for attempt in range(self.max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    # Try main news endpoint first
+                    params = {
+                        "limit": limit,
+                        "category": "earnings,analysis,market",
+                    }
+                    response = await client.get(self.defeatbeta_news_url, params=params, follow_redirects=True)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        articles = []
+                        
+                        # Handle different response formats
+                        items = data.get("data", data.get("articles", data.get("results", [])))
+                        if not isinstance(items, list):
+                            items = [items] if items else []
+                        
+                        for item in items[:limit]:
+                            # Support multiple field naming conventions
+                            article = {
+                                "id": item.get("id", item.get("uuid", "")),
+                                "title": item.get("title", item.get("headline", "")),
+                                "content": item.get("content", item.get("summary", item.get("description", ""))),
+                                "source": "DefeatBeta API",
+                                "url": item.get("url", item.get("link", "")),
+                                "published_at": item.get("published_at", item.get("date", "")),
+                                "image": item.get("image", item.get("thumbnail", {}).get("url", "") if isinstance(item.get("thumbnail"), dict) else ""),
+                                "category": "💰 Finance",
+                            }
+                            if article["title"] and article["content"]:
+                                articles.append(article)
+                        
+                        if articles:
+                            logger.info(f"Successfully fetched {len(articles)} articles from DefeatBeta API")
+                            return articles[:limit]
+                    
+                    elif response.status_code == 429:  # Rate limited
+                        if attempt < self.max_retries - 1:
+                            wait_time = self.retry_delay * (2 ** attempt)
+                            logger.warning(f"DefeatBeta API rate limited (429). Retry {attempt + 1}/{self.max_retries} after {wait_time}s")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            logger.warning(f"DefeatBeta API rate limited after {self.max_retries} attempts")
+                            return []
+                    
+                    else:
+                        logger.warning(f"DefeatBeta API error: {response.status_code}")
+                        if attempt == self.max_retries - 1:
+                            return []
+            
+            except asyncio.TimeoutError:
+                logger.warning(f"DefeatBeta API timeout (attempt {attempt + 1}/{self.max_retries})")
+                if attempt == self.max_retries - 1:
+                    return []
+                await asyncio.sleep(self.retry_delay * (2 ** attempt))
+            
+            except Exception as e:
+                logger.error(f"DefeatBeta API error (attempt {attempt + 1}/{self.max_retries}): {e}")
+                if attempt == self.max_retries - 1:
+                    return []
+                await asyncio.sleep(self.retry_delay * (2 ** attempt))
+        
+        return []
+    
     
     async def get_yahoo_finance_news(self, category: str = "general", limit: int = 50) -> List[Dict[str, Any]]:
         """Fetch news from Yahoo Finance with retry logic and fallback."""
