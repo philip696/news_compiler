@@ -435,7 +435,7 @@ async def ingest_wechat_articles() -> int:
             return 0
         
         inserted = 0
-        category = "🇨🇳 WeChat"
+        category = "🔗 WeChat Official Accounts"
         
         # Ensure category exists
         if category not in state.available_categories:
