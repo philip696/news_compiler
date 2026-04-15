@@ -423,21 +423,21 @@ def ingest_kaggle_dataset() -> int:
         return 0
 
 
-async def ingest_yahoo_finance_articles() -> int:
-    """Load articles from Yahoo Finance API during startup."""
+async def ingest_wechat_articles() -> int:
+    """Load articles from WeChat RSS (wewe-rss) during startup."""
     try:
-        print(f"🔄 Fetching articles from Yahoo Finance API...")
-        from ..services.news_service import NewsService
+        print(f"📥 Fetching articles from WeChat RSS (wewe-rss)...")
+        from ..services.wechat_service import WeChatService
         
-        news_service = NewsService()
-        articles = await news_service.get_yahoo_finance_news(limit=50)
+        wechat_service = WeChatService()
+        articles = await wechat_service.get_all_articles(limit=100)
         
         if not articles:
-            print(f"⚠️  No articles received from Yahoo Finance API")
+            print(f"⚠️  No articles received from WeChat RSS")
             return 0
         
         inserted = 0
-        category = "💰 Finance"
+        category = "🇨🇳 WeChat"
         
         # Ensure category exists
         if category not in state.available_categories:
@@ -449,11 +449,11 @@ async def ingest_yahoo_finance_articles() -> int:
             try:
                 # Extract and normalize fields
                 title = article_data.get("title", "").strip()
-                content = article_data.get("content", "").strip()
-                url = article_data.get("url", f"https://example.local/{uuid.uuid4()}")
-                source_name = article_data.get("source", "Yahoo Finance")
-                published = article_data.get("published_at", "")
-                image_url = article_data.get("image", "")
+                content = article_data.get("content", article_data.get("summary", "")).strip()
+                url = article_data.get("link", article_data.get("url", f"https://example.local/{uuid.uuid4()}"))
+                source_name = article_data.get("source", "WeChat")
+                published = article_data.get("pubDate", article_data.get("published_at", ""))
+                image_url = article_data.get("thumbnail", article_data.get("image", ""))
                 
                 if not title or not content:
                     continue
@@ -464,7 +464,7 @@ async def ingest_yahoo_finance_articles() -> int:
                 embedding = text_to_embedding(combined_text)
                 
                 # Create article structure
-                article_id = f"yahoo_finance_{inserted}_{idx}"
+                article_id = f"wechat_{inserted}_{idx}"
                 source_id = source_name.lower().replace(" ", "_")
                 
                 article = {
@@ -491,93 +491,12 @@ async def ingest_yahoo_finance_articles() -> int:
                     inserted += 1
             
             except Exception as e:
-                print(f"  ⚠️  Error processing Yahoo Finance article {idx}: {str(e)[:80]}")
+                print(f"  ⚠️  Error processing WeChat article {idx}: {str(e)[:80]}")
                 continue
         
-        print(f"✅ Loaded {inserted} articles from Yahoo Finance API")
+        print(f"✅ Loaded {inserted} articles from WeChat RSS")
         return inserted
     
     except Exception as e:
-        print(f"❌ Error loading Yahoo Finance articles: {type(e).__name__}: {str(e)[:100]}")
+        print(f"❌ Error loading WeChat articles: {type(e).__name__}: {str(e)[:100]}")
         return 0
-
-
-async def ingest_defeatbeta_articles() -> int:
-    """Load articles from DefeatBeta API during startup."""
-    try:
-        print(f"🔄 Fetching articles from DefeatBeta API...")
-        from ..services.news_service import NewsService
-        
-        news_service = NewsService()
-        articles = await news_service.get_defeatbeta_news(limit=50)
-        
-        if not articles:
-            print(f"⚠️  No articles received from DefeatBeta API")
-            return 0
-        
-        inserted = 0
-        category = "💰 Finance"
-        
-        # Ensure category exists
-        if category not in state.available_categories:
-            state.available_categories.append(category)
-        if category not in state.articles_by_category:
-            state.articles_by_category[category] = []
-        
-        for idx, article_data in enumerate(articles):
-            try:
-                # Extract and normalize fields
-                title = article_data.get("title", "").strip()
-                content = article_data.get("content", "").strip()
-                url = article_data.get("url", f"https://example.local/{uuid.uuid4()}")
-                source_name = article_data.get("source", "DefeatBeta API")
-                published = article_data.get("published_at", "")
-                image_url = article_data.get("image", "")
-                
-                if not title or not content:
-                    continue
-                
-                # Classify topic
-                combined_text = f"{title} {content}"
-                topic, confidence = classify_topic(combined_text)
-                embedding = text_to_embedding(combined_text)
-                
-                # Create article structure
-                article_id = f"defeatbeta_{inserted}_{idx}"
-                source_id = source_name.lower().replace(" ", "_")
-                
-                article = {
-                    "id": article_id,
-                    "title": title,
-                    "content": content,
-                    "url": url,
-                    "source_id": source_id,
-                    "source_name": source_name,
-                    "published_at": _parse_published(published),
-                    "topic": topic,
-                    "topic_confidence": confidence,
-                    "embedding": embedding,
-                    "logo_url": "",
-                    "main_image": image_url,
-                    "category": category,
-                }
-                
-                # Store in state
-                if article_id not in state.articles:
-                    state.articles[article_id] = article
-                    state.article_popularity.setdefault(article_id, 0)
-                    state.articles_by_category[category].append(article)
-                    inserted += 1
-            
-            except Exception as e:
-                print(f"  ⚠️  Error processing DefeatBeta article {idx}: {str(e)[:80]}")
-                continue
-        
-        print(f"✅ Loaded {inserted} articles from DefeatBeta API")
-        return inserted
-    
-    except Exception as e:
-        print(f"❌ Error loading DefeatBeta articles: {type(e).__name__}: {str(e)[:100]}")
-        return 0
-    """Load mock articles for development/testing."""
-    return ingest_webhose_jsonl()

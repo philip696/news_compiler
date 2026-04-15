@@ -46,7 +46,7 @@ async def run_startup_sequence():
     try:
         print(f"[{time.time()-global_start:.2f}s] Importing modules...")
         from . import state
-        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_yahoo_finance_articles, ingest_defeatbeta_articles
+        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_wechat_articles
         from .clustering.engine import build_story_clusters
         print(f"[{time.time()-global_start:.2f}s] ✅ Modules imported\n")
     except Exception as e:
@@ -61,7 +61,7 @@ async def run_startup_sequence():
         return
     
     # Phase 1: WebHose
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/6] Loading WebHose articles...")
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/5] Loading WebHose articles...")
     phase1_start = time.time()
     try:
         count = ingest_webhose_jsonl()
@@ -69,84 +69,46 @@ async def run_startup_sequence():
         print(f"[{time.time()-global_start:.2f}s] ✅ WebHose: {count} articles loaded ({phase1_time:.2f}s)\n")
     except Exception as e:
         phase1_time = time.time() - phase1_start
-        print(f"[{time.time()-global_start:.2f}s] ❌ WebHose failed after {phase1_time:.2f}s (continuing): {type(e).__name__}: {e}\n")
+        print(f"[{time.time()-global_start:.2f}s] ❌ WebHose failed after {phase1_time:.2f}s: {type(e).__name__}: {e}\n")
         import traceback
         traceback.print_exc()
     
-    # Phase 2: DefeatBeta API (PRIMARY) - High-quality financial analysis
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/6] Loading DefeatBeta API articles (PRIMARY)...")
+    # Phase 2: Kaggle
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/5] Loading Kaggle dataset...")
     phase2_start = time.time()
-    defeatbeta_count = 0
-    
+    kaggle_count = 0
     try:
-        defeatbeta_count = await ingest_defeatbeta_articles()
+        kaggle_count = ingest_kaggle_dataset()
+        phase2_time = time.time() - phase2_start
+        print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle: {kaggle_count} articles loaded ({phase2_time:.2f}s)\n")
     except Exception as e:
         phase2_time = time.time() - phase2_start
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  DefeatBeta API failed after {phase2_time:.2f}s: {type(e).__name__}\n")
+        print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle failed after {phase2_time:.2f}s: {type(e).__name__}: {e}\n")
+        import traceback
+        traceback.print_exc()
     
-    phase2_time = time.time() - phase2_start
-    if defeatbeta_count > 0:
-        print(f"[{time.time()-global_start:.2f}s] ✅ DefeatBeta (PRIMARY): {defeatbeta_count} articles loaded ({phase2_time:.2f}s)\n")
-    else:
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  DefeatBeta (PRIMARY) delivered 0 articles ({phase2_time:.2f}s)")
-        print(f"[{time.time()-global_start:.2f}s] 📥 Falling back to Yahoo Finance and Kaggle...\n")
-    
-    # Phase 3: Yahoo Finance API (SECONDARY) - if DefeatBeta delivered < 100 articles
-    if defeatbeta_count < 100:
-        print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/6] Loading Yahoo Finance articles (SECONDARY)...")
-        phase3_start = time.time()
-        yahoo_count = 0
-        
-        try:
-            yahoo_count = await ingest_yahoo_finance_articles()
-        except Exception as e:
-            phase3_time = time.time() - phase3_start
-            print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance API failed after {phase3_time:.2f}s: {type(e).__name__}\n")
-        
+    # Phase 3: WeChat RSS
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/5] Loading WeChat RSS articles...")
+    phase3_start = time.time()
+    wechat_count = 0
+    try:
+        wechat_count = await ingest_wechat_articles()
         phase3_time = time.time() - phase3_start
-        if yahoo_count > 0:
-            print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance (SECONDARY): {yahoo_count} articles loaded ({phase3_time:.2f}s)")
-            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
-        else:
-            print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance (SECONDARY) delivered 0 articles ({phase3_time:.2f}s)")
-            print(f"[{time.time()-global_start:.2f}s] 📥 Falling back to Kaggle dataset...\n")
-            yahoo_count = 0
-    else:
-        print(f"[{time.time()-global_start:.2f}s] ✅ DefeatBeta (PRIMARY) delivered sufficient data ({defeatbeta_count} articles)")
-        print(f"[{time.time()-global_start:.2f}s] ⏭️  Skipping Yahoo Finance SECONDARY phase")
-        print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
-        yahoo_count = 0
+        print(f"[{time.time()-global_start:.2f}s] ✅ WeChat RSS: {wechat_count} articles loaded ({phase3_time:.2f}s)\n")
+    except Exception as e:
+        phase3_time = time.time() - phase3_start
+        print(f"[{time.time()-global_start:.2f}s] ⚠️  WeChat RSS failed after {phase3_time:.2f}s: {type(e).__name__}: {e}\n")
+        import traceback
+        traceback.print_exc()
     
-    # Phase 4: Kaggle (FALLBACK - only if DefeatBeta + Yahoo Finance didn't deliver enough)
-    total_real_sources = defeatbeta_count + yahoo_count
-    if total_real_sources < 200:  # If real sources didn't provide substantial data
-        print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 4/6] Loading Kaggle dataset (FALLBACK)...")
-        phase4_start = time.time()
-        kaggle_count = 0
-        try:
-            kaggle_count = ingest_kaggle_dataset()
-            phase4_time = time.time() - phase4_start
-            total_loaded = defeatbeta_count + yahoo_count + kaggle_count
-            print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle (FALLBACK): {kaggle_count} articles loaded ({phase4_time:.2f}s)")
-            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}")
-            print(f"[{time.time()-global_start:.2f}s]    → DefeatBeta: {defeatbeta_count} | Yahoo Finance: {yahoo_count} | Kaggle: {kaggle_count}\n")
-        except Exception as e:
-            phase4_time = time.time() - phase4_start
-            print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle fallback failed after {phase4_time:.2f}s: {type(e).__name__}: {e}\n")
-            import traceback
-            traceback.print_exc()
-    else:
-        print(f"[{time.time()-global_start:.2f}s] ✅ Real sources (DefeatBeta + Yahoo) delivered sufficient data ({total_real_sources} articles)")
-        print(f"[{time.time()-global_start:.2f}s] ⏭️  Skipping Kaggle fallback phase\n")
-    
-    # Phase 5: Startup checkpoint - mark startup complete
-    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 5/6] Startup checkpoint saved")
+    # Phase 4: Startup checkpoint - mark startup complete
+    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 4/5] Startup checkpoint saved")
     state.startup_complete = True
     print(f"[{time.time()-global_start:.2f}s] 💾 state.startup_complete = True")
     print(f"[{time.time()-global_start:.2f}s] 📊 Articles loaded: {len(state.articles)} across {len(state.available_categories)} categories\n")
     
-    # Phase 6: Background clustering (non-blocking)
-    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 6/6] Starting background clustering...")
+    # Phase 5: Background clustering (non-blocking)
+    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 5/5] Starting background clustering...")
     try:
         import threading
         
@@ -168,6 +130,17 @@ async def run_startup_sequence():
         print(f"[{time.time()-global_start:.2f}s] ✅ Background clustering thread started\n")
     except Exception as e:
         print(f"[{time.time()-global_start:.2f}s] ⚠️  Threading setup failed: {type(e).__name__}: {e}\n")
+        import traceback
+        traceback.print_exc()
+    
+    # Initialize background scheduler for periodic tasks (Hacker News, etc.)
+    try:
+        from workers.scheduler import get_scheduler
+        scheduler = get_scheduler()
+        scheduler.start_scheduler()
+        print(f"[{time.time()-global_start:.2f}s] ✅ Background scheduler started\n")
+    except Exception as e:
+        print(f"[{time.time()-global_start:.2f}s] ⚠️  Background scheduler failed: {type(e).__name__}: {e}\n")
         import traceback
         traceback.print_exc()
     
