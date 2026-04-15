@@ -424,16 +424,14 @@ def ingest_kaggle_dataset() -> int:
 
 
 async def ingest_wechat_articles() -> int:
-    """Load articles from WeChat RSS (wewe-rss) during startup."""
+    """Load articles from WeChat articles dataset (JSONL file)."""
     try:
-        print(f"📥 Fetching articles from WeChat RSS (wewe-rss)...")
-        from ..services.wechat_service import WeChatService
+        print(f"📥 Loading articles from WeChat dataset...")
         
-        wechat_service = WeChatService()
-        articles = await wechat_service.get_all_articles(limit=100)
+        wechat_data_path = Path(__file__).parent.parent.parent / "data" / "wechat_articles.jsonl"
         
-        if not articles:
-            print(f"⚠️  No articles received from WeChat RSS")
+        if not wechat_data_path.exists():
+            print(f"❌ WeChat articles file not found at {wechat_data_path}")
             return 0
         
         inserted = 0
@@ -445,56 +443,63 @@ async def ingest_wechat_articles() -> int:
         if category not in state.articles_by_category:
             state.articles_by_category[category] = []
         
-        for idx, article_data in enumerate(articles):
-            try:
-                # Extract and normalize fields
-                title = article_data.get("title", "").strip()
-                content = article_data.get("content", article_data.get("summary", "")).strip()
-                url = article_data.get("link", article_data.get("url", f"https://example.local/{uuid.uuid4()}"))
-                source_name = article_data.get("source", "WeChat")
-                published = article_data.get("pubDate", article_data.get("published_at", ""))
-                image_url = article_data.get("thumbnail", article_data.get("image", ""))
+        # Read JSONL file
+        with open(wechat_data_path, 'r', encoding='utf-8') as f:
+            for idx, line in enumerate(f):
+                try:
+                    if not line.strip():
+                        continue
+                    
+                    article_data = json.loads(line)
+                    
+                    # Extract and normalize fields
+                    title = article_data.get("title", "").strip()
+                    content = article_data.get("content", article_data.get("summary", "")).strip()
+                    url = article_data.get("link", article_data.get("url", f"https://example.local/{uuid.uuid4()}"))
+                    source_name = article_data.get("source", "WeChat")
+                    published = article_data.get("pubDate", article_data.get("published_at", ""))
+                    image_url = article_data.get("thumbnail", article_data.get("image", ""))
+                    
+                    if not title or not content:
+                        continue
+                    
+                    # Classify topic
+                    combined_text = f"{title} {content}"
+                    topic, confidence = classify_topic(combined_text)
+                    embedding = text_to_embedding(combined_text)
+                    
+                    # Create article structure
+                    article_id = f"wechat_{inserted}_{idx}"
+                    source_id = source_name.lower().replace(" ", "_")
+                    
+                    article = {
+                        "id": article_id,
+                        "title": title,
+                        "content": content,
+                        "url": url,
+                        "source_id": source_id,
+                        "source_name": source_name,
+                        "published_at": _parse_published(published),
+                        "topic": topic,
+                        "topic_confidence": confidence,
+                        "embedding": embedding,
+                        "logo_url": "",
+                        "main_image": image_url,
+                        "category": category,
+                    }
+                    
+                    # Store in state
+                    if article_id not in state.articles:
+                        state.articles[article_id] = article
+                        state.article_popularity.setdefault(article_id, 0)
+                        state.articles_by_category[category].append(article)
+                        inserted += 1
                 
-                if not title or not content:
+                except Exception as e:
+                    print(f"  ⚠️  Error processing WeChat article {idx}: {str(e)[:80]}")
                     continue
-                
-                # Classify topic
-                combined_text = f"{title} {content}"
-                topic, confidence = classify_topic(combined_text)
-                embedding = text_to_embedding(combined_text)
-                
-                # Create article structure
-                article_id = f"wechat_{inserted}_{idx}"
-                source_id = source_name.lower().replace(" ", "_")
-                
-                article = {
-                    "id": article_id,
-                    "title": title,
-                    "content": content,
-                    "url": url,
-                    "source_id": source_id,
-                    "source_name": source_name,
-                    "published_at": _parse_published(published),
-                    "topic": topic,
-                    "topic_confidence": confidence,
-                    "embedding": embedding,
-                    "logo_url": "",
-                    "main_image": image_url,
-                    "category": category,
-                }
-                
-                # Store in state
-                if article_id not in state.articles:
-                    state.articles[article_id] = article
-                    state.article_popularity.setdefault(article_id, 0)
-                    state.articles_by_category[category].append(article)
-                    inserted += 1
-            
-            except Exception as e:
-                print(f"  ⚠️  Error processing WeChat article {idx}: {str(e)[:80]}")
-                continue
         
-        print(f"✅ Loaded {inserted} articles from WeChat RSS")
+        print(f"✅ Loaded {inserted} articles from WeChat dataset")
         return inserted
     
     except Exception as e:
