@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, BASE_URL, joinUrl } from "../../services/api";
 import { useAuthStore } from "../../store/auth";
 import { useProtectedRoute } from "../../hooks/useProtectedRoute";
+import AIChat from "../../components/AIChat";
 
 interface Article {
   id: string;
@@ -353,6 +354,13 @@ export default function ArticlePage() {
           </div>
         </article>
       </main>
+
+      {/* AI Assistant Chat */}
+      <AIChat
+        articleId={article.id}
+        articleTitle={article.title}
+        articleContent={article.content}
+      />
     </div>
   );
 }

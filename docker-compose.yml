@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # wewe-rss - WeChat Official Account RSS/JSON fetcher
+  wewe-rss:
+    image: cooderl/wewe-rss:latest
+    container_name: geb-wewe-rss
+    environment:
+      DATABASE_TYPE: sqlite
+      # Update every 10 minutes for near real-time
+      CRON_EXPRESSION: "*/10 * * * *"
+      # Get full article content
+      FEED_MODE: fulltext
+      # Server URL for RSS generation
+      SERVER_ORIGIN_URL: "http://localhost:4000"
+      # Auth code (optional)
+      AUTH_CODE: ""
+    volumes:
+      - wewe_rss_data:/app/data
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # FastAPI Backend - lightweight, no DB needed
+  fastapi:
+    build: ./backend
+    container_name: geb-backend
+    environment:
+      # wewe-rss connection
+      WEWE_RSS_URL: "http://wewe-rss:4000"
+      # Frontend URLs
+      FRONTEND_URL: "http://localhost:3000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      wewe-rss:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+volumes:
+  wewe_rss_data:
+
+networks:
+  default:
+    name: geb-network

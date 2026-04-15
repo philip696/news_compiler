@@ -14,7 +14,8 @@ interface BookmarkedArticle {
   published_at: string;
 }
 
-const getLogoPath = (sourceName: string): string => {
+const getLogoPath = (sourceName: string | undefined): string => {
+  if (!sourceName) return joinUrl("/data/logos/wired.png");
   const normalized = sourceName.toLowerCase().trim();
   const logoMap: { [key: string]: string } = {
     "techcrunch": "tech_crunch.png",

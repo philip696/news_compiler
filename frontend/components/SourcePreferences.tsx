@@ -6,7 +6,8 @@ type Props = {
   onPrefer: (sourceId: string) => Promise<void>;
 };
 
-const getLogoPath = (sourceId: string): string => {
+const getLogoPath = (sourceId: string | undefined): string => {
+  if (!sourceId) return joinUrl("/data/logos/wired.png");
   const normalized = sourceId.toLowerCase().trim();
   const logoMap: { [key: string]: string } = {
     "techcrunch": "tech_crunch.png",

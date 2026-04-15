@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 import random
+import asyncio
 
 from ..core.deps import get_current_user
 from ..db.database import get_db
@@ -8,6 +9,8 @@ from ..db.models import Bookmark, Like
 from ..recommendation.ranker import rank_feed_for_user
 from ..schemas import FeedResponse, ArticleOut, ArticleDetailOut
 from .. import state
+from ..services.wechat_service import WeChatService
+from ..services.news_service import get_news_service
 
 router = APIRouter(prefix="/api/feed", tags=["feed"])
 
@@ -39,33 +42,65 @@ def get_categories(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/category/{category_name}", response_model=dict)
-def get_category_articles(
+async def get_category_articles(
     category_name: str,
     current_user: dict = Depends(get_current_user),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Get articles from a specific category. Loads 50 random articles from that category."""
+    """Get articles from a specific category. Loads articles from WeChat or News APIs."""
     if category_name not in state.available_categories:
         raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found")
     
-    # Get articles from this category
-    category_articles = state.articles_by_category.get(category_name, [])
+    # Handle WeChat category
+    if category_name == "🔗 WeChat Official Accounts":
+        try:
+            wechat_service = WeChatService()
+            articles = await wechat_service.get_all_articles(limit=limit)
+            
+            if not articles:
+                return {
+                    "category": category_name,
+                    "articles": [],
+                    "total": 0,
+                }
+            
+            return {
+                "category": category_name,
+                "articles": articles,
+                "total": len(articles),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch WeChat articles: {str(e)}")
     
-    if not category_articles:
-        raise HTTPException(status_code=404, detail=f"No articles found for category '{category_name}'")
+    # Handle news categories
+    news_service = get_news_service()
+    articles = []
     
-    # Select random articles up to limit
-    selected = random.sample(category_articles, min(limit, len(category_articles)))
-    
-    # Load them into the main articles dict temporarily
-    for article in selected:
-        state.articles[article["id"]] = article
-    
-    return {
-        "category": category_name,
-        "articles": selected,
-        "total": len(selected),
-    }
+    try:
+        if category_name == "🌍 World News":
+            articles = await news_service.get_general_news(limit=limit)
+        elif category_name == "💻 Technology":
+            articles = await news_service.get_tech_news(limit=limit)
+        elif category_name == "📊 Business":
+            articles = await news_service.get_business_news(limit=limit)
+        elif category_name == "💰 Finance":
+            articles = await news_service.get_yahoo_finance_news(limit=limit)
+        else:
+            articles = await news_service.get_all_news(limit=limit)
+        
+        # Cache articles in state for quick access
+        for article in articles:
+            article_id = article.get("id", "")
+            if article_id:
+                state.articles[article_id] = article
+        
+        return {
+            "category": category_name,
+            "articles": articles,
+            "total": len(articles),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch news articles: {str(e)}")
 
 
 @router.get("/article/{article_id}", response_model=ArticleDetailOut)

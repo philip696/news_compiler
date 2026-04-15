@@ -2,7 +2,9 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from backend directory
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(env_path)
 
 
 class Settings:
@@ -17,6 +19,11 @@ class Settings:
     dataset_path: str = os.getenv("DATASET_PATH", str(Path(__file__).parent.parent.parent / "data" / "webhose_sample" / "news.jsonl"))
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
     celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    
+    # AI Service (Ollama Cloud)
+    OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "https://api.ollama.com")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
 
 
 settings = Settings()

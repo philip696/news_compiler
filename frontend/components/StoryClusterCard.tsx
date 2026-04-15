@@ -14,7 +14,8 @@ type Props = {
   className?: string;
 };
 
-const getLogoPath = (sourceId: string): string => {
+const getLogoPath = (sourceId: string | undefined): string => {
+  if (!sourceId) return joinUrl("/data/logos/wired.png");
   const normalized = sourceId.toLowerCase().trim();
   const logoMap: { [key: string]: string } = {
     "techcrunch": "tech_crunch.png",

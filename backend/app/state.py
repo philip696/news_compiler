@@ -52,7 +52,16 @@ reading_history: dict[str, list[dict[str, Any]]] = {}
 articles: dict[str, dict[str, Any]] = {}
 clusters: dict[str, dict[str, Any]] = {}
 article_popularity: dict[str, int] = {}
-available_categories: list[str] = []
+
+# Hardcoded categories always available
+HARDCODED_CATEGORIES = [
+    "🔗 WeChat Official Accounts",
+    "🌍 World News",
+    "💻 Technology",
+    "📊 Business",
+    "💰 Finance",
+]
+available_categories: list[str] = HARDCODED_CATEGORIES.copy()
 articles_by_category: dict[str, list[dict[str, Any]]] = {}
 
 

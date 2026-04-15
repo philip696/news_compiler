@@ -7,7 +7,7 @@ export interface Article {
   title: string;
   content?: string;
   main_image?: string;
-  source_name: string;
+  source_name?: string;
   published_at: string;
   url?: string;
   category?: string;
@@ -27,7 +27,8 @@ type Props = {
   className?: string;
 };
 
-const getLogoPath = (sourceId: string): string => {
+const getLogoPath = (sourceId: string | undefined): string => {
+  if (!sourceId) return joinUrl("/data/logos/wired.png");
   const normalized = sourceId.toLowerCase().trim();
   
   // Map source names to logo files in backend /data/logos directory

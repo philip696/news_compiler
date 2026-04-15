@@ -12,7 +12,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+    try:
+        return pwd_context.verify(password, password_hash)
+    except ValueError:
+        # Defensive fallback: treat backend hash errors as non-matching credentials
+        # instead of leaking as a 500 error.
+        return False
 
 
 def create_access_token(payload: Dict[str, Any], expires_delta: timedelta | None = None) -> str:

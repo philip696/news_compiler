@@ -1,20 +1,21 @@
-"""Chatbot service for article summarization and advanced search using DeepSeek AI."""
+"""Chatbot service for article summarization and advanced search using Ollama AI."""
 
-import os
+import asyncio
 from typing import List, Dict, Optional
-import httpx
 from .. import state
+from .ai_service import AIService
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ChatbotService:
-    """Service for handling chatbot queries using DeepSeek AI."""
+    """Service for handling chatbot queries using Ollama AI."""
     
     def __init__(self):
-        self.api_key = os.getenv("DEEPSEEK_API_KEY")
-        self.api_url = "https://api.deepseek.com/chat/completions"
-        self.model = "deepseek-chat"
+        self.ai_service = AIService()
         self.vectorizer = TfidfVectorizer(max_features=100, stop_words='english')
         self.article_vectors = None
         self.articles = []
@@ -90,42 +91,16 @@ class ChatbotService:
             print(f"Search error: {e}")
             return []
     
-    def call_deepseek(self, prompt: str, max_tokens: int = 500) -> str:
-        """Call DeepSeek API for text generation."""
-        if not self.api_key:
-            return "DeepSeek API key not configured."
-        
+    async def call_ollama(self, prompt: str, max_tokens: int = 500) -> str:
+        """Call Ollama AI for text generation."""
         try:
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
-            
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant that summarizes articles and provides insights based on news content."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": max_tokens
-            }
-            
-            with httpx.Client() as client:
-                response = client.post(self.api_url, json=payload, headers=headers, timeout=30.0)
-                response.raise_for_status()
-                
-                data = response.json()
-                if 'choices' in data and len(data['choices']) > 0:
-                    return data['choices'][0]['message']['content']
-                else:
-                    return "No response from DeepSeek API."
+            return await self.ai_service._call_ai(prompt)
         except Exception as e:
-            print(f"DeepSeek API error: {e}")
-            return f"Error calling DeepSeek: {str(e)}"
+            logger.error(f"Ollama AI error: {e}")
+            return f"Error calling Ollama AI: {str(e)}"
     
-    def summarize_article(self, article_content: str, article_title: str) -> str:
-        """Summarize an article using DeepSeek AI."""
+    async def summarize_article(self, article_content: str, article_title: str) -> str:
+        """Summarize an article using Ollama AI."""
         prompt = f"""Please provide a concise summary (3-4 sentences) of the following article:
 
 Title: {article_title}
@@ -135,9 +110,9 @@ Content:
 
 Summary:"""
         
-        return self.call_deepseek(prompt, max_tokens=300)
+        return await self.call_ollama(prompt, max_tokens=300)
     
-    def search_and_compile(self, query: str, topic: Optional[str] = None, 
+    async def search_and_compile(self, query: str, topic: Optional[str] = None, 
                           keywords: Optional[List[str]] = None, limit: int = 5) -> Dict:
         """Search and compile articles based on user request."""
         articles = self.search_articles(query, topic=topic, keywords=keywords, top_k=limit)
@@ -150,7 +125,7 @@ Summary:"""
                 'count': 0
             }
         
-        # Build context from articles for DeepSeek
+        # Build context from articles for Ollama
         context = "Found articles:\n"
         for i, article in enumerate(articles, 1):
             context += f"{i}. {article['title']} (Topic: {article['topic']})\n"
@@ -161,7 +136,7 @@ Summary:"""
 
 Please provide a brief synthesis (2-3 sentences) of how these articles relate to the user's request."""
         
-        synthesis = self.call_deepseek(prompt, max_tokens=200)
+        synthesis = await self.call_ollama(prompt, max_tokens=200)
         
         return {
             'query': query,

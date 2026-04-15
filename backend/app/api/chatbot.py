@@ -1,5 +1,6 @@
 """Chatbot API endpoints for article summarization and advanced search."""
 
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from ..core.deps import get_current_user
@@ -22,11 +23,11 @@ class SearchRequest(BaseModel):
     limit: int = 5
 
 @router.post("/summarize")
-def summarize_article(
+async def summarize_article(
     request: SummarizeRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Summarize an article using DeepSeek AI.
+    """Summarize an article using Ollama AI.
     
     Args:
         request: Contains article_id, article_content, article_title
@@ -36,7 +37,7 @@ def summarize_article(
         Dictionary with article_id, original_content, and summary
     """
     try:
-        summary = chatbot.summarize_article(request.article_content, request.article_title)
+        summary = await chatbot.summarize_article(request.article_content, request.article_title)
         
         return {
             'article_id': request.article_id,
@@ -48,7 +49,7 @@ def summarize_article(
         raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
 
 @router.post("/search")
-def search_and_compile(
+async def search_and_compile(
     request: SearchRequest,
     current_user: dict = Depends(get_current_user)
 ):
@@ -62,7 +63,7 @@ def search_and_compile(
         Dictionary with query, synthesis, matching articles, and metadata
     """
     try:
-        result = chatbot.search_and_compile(
+        result = await chatbot.search_and_compile(
             query=request.query,
             topic=request.topic,
             keywords=request.keywords,
@@ -112,15 +113,34 @@ def quick_search(
 
 @router.get("/health")
 def chatbot_health():
-    """Check chatbot service health and API key status."""
-    import os
-    
-    has_api_key = bool(os.getenv("DEEPSEEK_API_KEY"))
-    has_articles = len(chatbot.articles) > 0
-    
-    return {
-        'status': 'healthy' if (has_api_key and has_articles) else 'degraded',
-        'deepseek_api_configured': has_api_key,
-        'articles_indexed': len(chatbot.articles),
-        'vectorizer_ready': chatbot.article_vectors is not None
-    }
+    """Check chatbot service health and Ollama API status."""
+    try:
+        from ..core.config import settings
+        import asyncio
+        
+        # Check if Ollama API is configured
+        has_ollama_key = bool(settings.OLLAMA_API_KEY)
+        has_ollama_url = bool(settings.OLLAMA_BASE_URL)
+        has_articles = len(chatbot.articles) > 0
+        
+        # Try to check Ollama health asynchronously
+        try:
+            health = asyncio.run(chatbot.ai_service.health_check())
+        except:
+            health = False
+        
+        return {
+            'status': 'healthy' if (has_ollama_key and has_articles and health) else 'degraded',
+            'ollama_configured': has_ollama_key and has_ollama_url,
+            'ollama_accessible': health,
+            'articles_indexed': len(chatbot.articles),
+            'vectorizer_ready': chatbot.article_vectors is not None,
+            'ai_model': settings.OLLAMA_MODEL or 'mistral',
+            'ai_endpoint': settings.OLLAMA_BASE_URL or 'https://api.ollama.com'
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': str(e),
+            'ollama_configured': False
+        }

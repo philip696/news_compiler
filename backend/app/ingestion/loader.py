@@ -423,6 +423,85 @@ def ingest_kaggle_dataset() -> int:
         return 0
 
 
+async def ingest_yahoo_finance_articles() -> int:
+    """Load articles from Yahoo Finance API during startup."""
+    try:
+        print(f"🔄 Fetching articles from Yahoo Finance API...")
+        from ..services.news_service import NewsService
+        
+        news_service = NewsService()
+        articles = await news_service.get_yahoo_finance_news(limit=50)
+        
+        if not articles:
+            print(f"⚠️  No articles received from Yahoo Finance API")
+            return 0
+        
+        inserted = 0
+        category = "💰 Finance"
+        
+        # Ensure category exists
+        if category not in state.available_categories:
+            state.available_categories.append(category)
+        if category not in state.articles_by_category:
+            state.articles_by_category[category] = []
+        
+        for idx, article_data in enumerate(articles):
+            try:
+                # Extract and normalize fields
+                title = article_data.get("title", "").strip()
+                content = article_data.get("content", "").strip()
+                url = article_data.get("url", f"https://example.local/{uuid.uuid4()}")
+                source_name = article_data.get("source", "Yahoo Finance")
+                published = article_data.get("published_at", "")
+                image_url = article_data.get("image", "")
+                
+                if not title or not content:
+                    continue
+                
+                # Classify topic
+                combined_text = f"{title} {content}"
+                topic, confidence = classify_topic(combined_text)
+                embedding = text_to_embedding(combined_text)
+                
+                # Create article structure
+                article_id = f"yahoo_finance_{inserted}_{idx}"
+                source_id = source_name.lower().replace(" ", "_")
+                
+                article = {
+                    "id": article_id,
+                    "title": title,
+                    "content": content,
+                    "url": url,
+                    "source_id": source_id,
+                    "source_name": source_name,
+                    "published_at": _parse_published(published),
+                    "topic": topic,
+                    "topic_confidence": confidence,
+                    "embedding": embedding,
+                    "logo_url": "",
+                    "main_image": image_url,
+                    "category": category,
+                }
+                
+                # Store in state
+                if article_id not in state.articles:
+                    state.articles[article_id] = article
+                    state.article_popularity.setdefault(article_id, 0)
+                    state.articles_by_category[category].append(article)
+                    inserted += 1
+            
+            except Exception as e:
+                print(f"  ⚠️  Error processing Yahoo Finance article {idx}: {str(e)[:80]}")
+                continue
+        
+        print(f"✅ Loaded {inserted} articles from Yahoo Finance API")
+        return inserted
+    
+    except Exception as e:
+        print(f"❌ Error loading Yahoo Finance articles: {type(e).__name__}: {str(e)[:100]}")
+        return 0
+
+
 def ingest_mock_feed() -> int:
     """Load mock articles for development/testing."""
     return ingest_webhose_jsonl()

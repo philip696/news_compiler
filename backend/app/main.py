@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import os
-import re
 
 from . import state
 from .core.config import settings
@@ -18,6 +17,8 @@ from .api.sources import router as sources_router
 from .api.behavior import router as behavior_router
 from .api.admin import router as admin_router
 from .api.chatbot import router as chatbot_router
+from .api.wechat import router as wechat_router
+from .api.ai import router as ai_router
 
 # Initialize database tables
 Base.metadata.create_all(bind=engine)
@@ -39,13 +40,17 @@ if frontend_url := os.getenv("FRONTEND_URL"):
 if vercel_url := os.getenv("VERCEL_URL"):
     allowed_origins.append(f"https://{vercel_url}")
 
+# Allow all localhost/127.0.0.1 ports for local development + this project's Vercel previews.
+local_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+vercel_preview_regex = r"^https://newscompiler-[a-z0-9-]+\.vercel\.app$"
+
 # Configure CORS with specific origins + regex for preview domains
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.+\.vercel\.app",  # All Vercel preview domains
+    allow_origin_regex=f"{local_origin_regex}|{vercel_preview_regex}",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -97,6 +102,8 @@ app.include_router(sources_router)
 app.include_router(behavior_router)
 app.include_router(admin_router)
 app.include_router(chatbot_router)
+app.include_router(wechat_router)
+app.include_router(ai_router)
 
 
 @app.on_event("shutdown")
