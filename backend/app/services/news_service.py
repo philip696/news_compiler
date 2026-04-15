@@ -190,9 +190,13 @@ class NewsService:
         return self._get_fallback_finance_news(limit)
     
     def _get_fallback_finance_news(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return synthetic finance news when API is unavailable."""
-        logger.info(f"Returning {min(limit, len(SYNTHETIC_FINANCE_NEWS))} fallback finance articles")
-        return SYNTHETIC_FINANCE_NEWS[:limit]
+        """Return empty list - DefeatBeta fallback disabled.
+        
+        Instead of synthetic data, allow Kaggle fallback to load in startup sequence.
+        This ensures only real data sources are used (Yahoo Finance API or Kaggle dataset).
+        """
+        logger.info("DefeatBeta fallback disabled - relying on startup sequence fallback (Kaggle)")
+        return []
     
     async def get_general_news(self, category: str = "general", limit: int = 50) -> List[Dict[str, Any]]:
         """Fetch general news from NewsAPI or similar service."""
