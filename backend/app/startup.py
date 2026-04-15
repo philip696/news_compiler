@@ -61,7 +61,7 @@ def run_startup_sequence():
         return
     
     # Phase 1: WebHose
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/4] Loading WebHose articles...")
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/5] Loading WebHose articles...")
     phase1_start = time.time()
     try:
         count = ingest_mock_feed()
@@ -73,23 +73,12 @@ def run_startup_sequence():
         import traceback
         traceback.print_exc()
     
-    # Phase 2: Kaggle
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/5] Loading Kaggle dataset...")
+    # Phase 2: Yahoo Finance (PRIMARY) - Load first, use Kaggle as fallback
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/5] Loading Yahoo Finance articles (PRIMARY)...")
     phase2_start = time.time()
-    try:
-        count = ingest_kaggle_dataset()
-        phase2_time = time.time() - phase2_start
-        print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle: {count} articles loaded ({phase2_time:.2f}s)")
-        print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
-    except Exception as e:
-        phase2_time = time.time() - phase2_start
-        print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle failed after {phase2_time:.2f}s (continuing): {type(e).__name__}: {e}\n")
-        import traceback
-        traceback.print_exc()
+    yahoo_count = 0
+    yahoo_failed = False
     
-    # Phase 3: Yahoo Finance (async, requires special handling in event loop)
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/5] Loading Yahoo Finance articles...")
-    phase3_start = time.time()
     try:
         import asyncio
         # Check if we're already in an event loop
@@ -99,15 +88,12 @@ def run_startup_sequence():
             loop = None
         
         if loop:
-            # We're in an event loop, use create_task or run_until_complete approach
-            # For startup, we'll just call it synchronously via a helper
-            from ..services.news_service import NewsService
+            # We're in an event loop, use sync httpx
+            from .services.news_service import NewsService
             import httpx
             
-            # Create a simple sync wrapper for the async call
             news_service = NewsService()
             
-            # Fetch directly using sync httpx for startup
             try:
                 with httpx.Client(timeout=30) as client:
                     params = {
@@ -120,7 +106,6 @@ def run_startup_sequence():
                     if response.status_code == 200:
                         # Process articles
                         data = response.json()
-                        count = 0
                         category = "💰 Finance"
                         
                         if category not in state.available_categories:
@@ -147,7 +132,7 @@ def run_startup_sequence():
                                 topic, confidence = classify_topic(combined_text)
                                 embedding = text_to_embedding(combined_text)
                                 
-                                article_id = f"yahoo_finance_{count}_{idx}"
+                                article_id = f"yahoo_finance_{yahoo_count}_{idx}"
                                 source_id = source_name.lower().replace(" ", "_")
                                 
                                 article = {
@@ -170,32 +155,49 @@ def run_startup_sequence():
                                     state.articles[article_id] = article
                                     state.article_popularity.setdefault(article_id, 0)
                                     state.articles_by_category[category].append(article)
-                                    count += 1
+                                    yahoo_count += 1
                             except Exception as e:
                                 pass
                         
-                        phase3_time = time.time() - phase3_start
-                        if count > 0:
-                            print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance: {count} articles loaded ({phase3_time:.2f}s)")
-                            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
-                        else:
-                            print(f"[{time.time()-global_start:.2f}s] ℹ️  Yahoo Finance: 0 articles loaded ({phase3_time:.2f}s)\n")
                     else:
-                        phase3_time = time.time() - phase3_start
-                        print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance API returned {response.status_code} ({phase3_time:.2f}s)\n")
+                        yahoo_failed = True
             except Exception as e:
-                phase3_time = time.time() - phase3_start
-                print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance request failed ({phase3_time:.2f}s): {type(e).__name__}\n")
+                yahoo_failed = True
         else:
             # No event loop, use asyncio.run
-            count = asyncio.run(ingest_yahoo_finance_articles())
-            phase3_time = time.time() - phase3_start
-            print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance: {count} articles loaded ({phase3_time:.2f}s)")
-            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
+            yahoo_count = asyncio.run(ingest_yahoo_finance_articles())
     
     except Exception as e:
-        phase3_time = time.time() - phase3_start
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance failed after {phase3_time:.2f}s (non-critical): {type(e).__name__}: {str(e)[:80]}\n")
+        yahoo_failed = True
+    
+    phase2_time = time.time() - phase2_start
+    
+    if yahoo_count > 0:
+        print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance (PRIMARY): {yahoo_count} articles loaded ({phase2_time:.2f}s)")
+        print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}\n")
+    else:
+        print(f"[{time.time()-global_start:.2f}s] ⚠️  Yahoo Finance (PRIMARY) delivered 0 articles ({phase2_time:.2f}s)")
+        print(f"[{time.time()-global_start:.2f}s] 📥 Falling back to Kaggle dataset...\n")
+    
+    # Phase 3: Kaggle (FALLBACK - only if Yahoo Finance didn't deliver enough)
+    if yahoo_count < 100:  # If Yahoo Finance didn't provide substantial data
+        print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/5] Loading Kaggle dataset (FALLBACK)...")
+        phase3_start = time.time()
+        try:
+            kaggle_count = ingest_kaggle_dataset()
+            phase3_time = time.time() - phase3_start
+            total_loaded = yahoo_count + kaggle_count
+            print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle (FALLBACK): {kaggle_count} articles loaded ({phase3_time:.2f}s)")
+            print(f"[{time.time()-global_start:.2f}s] 📊 Total articles: {len(state.articles)}")
+            print(f"[{time.time()-global_start:.2f}s]    → Yahoo Finance: {yahoo_count} | Kaggle: {kaggle_count}\n")
+        except Exception as e:
+            phase3_time = time.time() - phase3_start
+            print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle fallback failed after {phase3_time:.2f}s: {type(e).__name__}: {e}\n")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"[{time.time()-global_start:.2f}s] ✅ Yahoo Finance (PRIMARY) delivered sufficient data ({yahoo_count} articles)")
+        print(f"[{time.time()-global_start:.2f}s] ⏭️  Skipping Kaggle fallback phase\n")
     
     # Mark startup complete
     print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 4/5] Startup checkpoint saved")

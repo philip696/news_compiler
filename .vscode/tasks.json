@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start GEB Backend Server",
+			"type": "shell",
+			"command": "cd /Users/philipdewanto/Downloads/Code/GEB/backend && PYTHONPATH=/Users/philipdewanto/Downloads/Code/GEB/backend ../../.venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+			"isBackground": true
+		},
+		{
+			"label": "Start GEB Backend Server",
+			"type": "shell",
+			"command": "cd /Users/philipdewanto/Downloads/Code/GEB/backend && PYTHONPATH=/Users/philipdewanto/Downloads/Code/GEB/backend /Users/philipdewanto/Downloads/Code/GEB/.venv/bin/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+			"isBackground": true
+		}
+	]
+}
