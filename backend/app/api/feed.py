@@ -47,60 +47,32 @@ async def get_category_articles(
     current_user: dict = Depends(get_current_user),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Get articles from a specific category. Loads articles from WeChat or News APIs."""
-    if category_name not in state.available_categories:
+    """Get articles from a specific category."""
+    if category_name not in state.available_categories and category_name not in state.explore_categories:
         raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found")
     
-    # Handle WeChat category
-    if category_name == "🔗 WeChat Official Accounts":
-        try:
-            wechat_service = WeChatService()
-            articles = await wechat_service.get_all_articles(limit=limit)
-            
-            if not articles:
-                return {
-                    "category": category_name,
-                    "articles": [],
-                    "total": 0,
-                }
-            
-            return {
-                "category": category_name,
-                "articles": articles,
-                "total": len(articles),
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch WeChat articles: {str(e)}")
+    # Get articles from state (loaded during startup)
+    articles = state.articles_by_category.get(category_name, [])
     
-    # Handle news categories
-    news_service = get_news_service()
-    articles = []
+    if not articles:
+        # Try explore categories
+        articles = state.articles_explore_by_category.get(category_name, [])
     
-    try:
-        if category_name == "🌍 World News":
-            articles = await news_service.get_general_news(limit=limit)
-        elif category_name == "💻 Technology":
-            articles = await news_service.get_tech_news(limit=limit)
-        elif category_name == "📊 Business":
-            articles = await news_service.get_business_news(limit=limit)
-        elif category_name == "💰 Finance":
-            articles = await news_service.get_yahoo_finance_news(limit=limit)
-        else:
-            articles = await news_service.get_all_news(limit=limit)
-        
-        # Cache articles in state for quick access
-        for article in articles:
-            article_id = article.get("id", "")
-            if article_id:
-                state.articles[article_id] = article
-        
+    if not articles:
         return {
             "category": category_name,
-            "articles": articles,
-            "total": len(articles),
+            "articles": [],
+            "total": 0,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch news articles: {str(e)}")
+    
+    # Return up to limit articles
+    selected_articles = articles[:limit] if limit else articles
+    
+    return {
+        "category": category_name,
+        "articles": selected_articles,
+        "total": len(articles),
+    }
 
 
 @router.get("/article/{article_id}", response_model=ArticleDetailOut)
@@ -158,7 +130,9 @@ def get_explore_feed(
 @router.get("/explore/categories")
 def get_explore_categories(current_user: dict = Depends(get_current_user)):
     """Get list of available explore categories."""
-    return {"categories": state.explore_categories}
+    # Include both explore categories (Kaggle) and available categories (WeChat, News)
+    categories = list(set(state.explore_categories + state.available_categories))
+    return {"categories": sorted(categories)}
 
 
 @router.get("/explore/category/{category_name}", response_model=dict)
