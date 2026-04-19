@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 import random
-import asyncio
 
 from ..core.deps import get_current_user
 from ..db.database import get_db
@@ -9,7 +8,6 @@ from ..db.models import Bookmark, Like
 from ..recommendation.ranker import rank_feed_for_user
 from ..schemas import FeedResponse, ArticleOut, ArticleDetailOut
 from .. import state
-from ..services.wechat_service import WeChatService
 from ..services.news_service import get_news_service
 
 router = APIRouter(prefix="/api/feed", tags=["feed"])

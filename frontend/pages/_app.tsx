@@ -6,7 +6,19 @@ import { setAuthToken } from "../services/api";
 import { useAuthStore } from "../store/auth";
 import "../styles/globals.css";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error: any) => {
+        const status = error?.response?.status;
+        if (status === 401 || status === 403) {
+          return false;
+        }
+        return failureCount < 2;
+      },
+    },
+  },
+});
 
 export default function App({ Component, pageProps }: AppProps) {
   const token = useAuthStore((state) => state.token);
@@ -19,9 +31,7 @@ export default function App({ Component, pageProps }: AppProps) {
 
   useEffect(() => {
     // Set the auth token immediately when it changes
-    if (token) {
-      setAuthToken(token);
-    }
+    setAuthToken(token ?? null);
   }, [token, isHydrated]);
 
   return (

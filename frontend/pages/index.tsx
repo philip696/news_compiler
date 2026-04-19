@@ -9,6 +9,7 @@ import StoryClusterCard from "../components/StoryClusterCard";
 import ArticleCard from "../components/ArticleCard";
 import TopicSelector from "../components/TopicSelector";
 import SourcePreferences from "../components/SourcePreferences";
+import WeWeRSSQRLogin from "../components/WeWeRSSQRLogin";
 
 type Topic = {
   id: string;
@@ -40,6 +41,8 @@ export default function HomePage() {
   const [categoryArticles, setCategoryArticles] = useState<Article[]>([]);
   const [loadingCategory, setLoadingCategory] = useState(false);
   const [articleActions, setArticleActions] = useState<{ [key: string]: { liked: boolean; bookmarked: boolean } }>({});
+  const [showWeChatLogin, setShowWeChatLogin] = useState(false);
+  const [weChatAccounts, setWeChatAccounts] = useState<any[]>([]);
 
   const { data: stories = [] } = useFeed(!!token);
 
@@ -91,6 +94,16 @@ export default function HomePage() {
 
   const handleCategoryClick = async (category: string) => {
     setSelectedCategory(category);
+    
+    // Check if clicking on WeChat Official Accounts
+    if (category === "🔗 WeChat Official Accounts") {
+      setShowWeChatLogin(true);
+      setCategoryArticles([]);
+      return;
+    }
+    
+    // Regular category handling
+    setShowWeChatLogin(false);
     setLoadingCategory(true);
     try {
       const response = await api.get(`/api/feed/category/${encodeURIComponent(category)}?limit=50`);
@@ -362,6 +375,26 @@ export default function HomePage() {
                         />
                       );
                     })}
+                  </div>
+                </>
+              ) : showWeChatLogin ? (
+                // WeChat QR Login View
+                <>
+                  <div className="mb-6 flex items-end justify-between">
+                    <div>
+                      <h1 className="text-2xl font-bold tracking-tight text-slate-900">🔗 WeChat Official Accounts</h1>
+                      <p className="text-sm text-slate-500 mt-1">Connect your WeChat account to add articles</p>
+                    </div>
+                  </div>
+                  <div className="rounded-3xl border border-slate-200/60 bg-white/70 backdrop-blur-md p-8 shadow-sm">
+                    <WeWeRSSQRLogin
+                      onAccountAdded={(account) => {
+                        setWeChatAccounts(prev => [...prev, account]);
+                      }}
+                      onError={(error) => {
+                        console.error("WeChat login error:", error);
+                      }}
+                    />
                   </div>
                 </>
               ) : (

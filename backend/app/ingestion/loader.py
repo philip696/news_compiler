@@ -505,3 +505,80 @@ async def ingest_wechat_articles() -> int:
     except Exception as e:
         print(f"❌ Error loading WeChat articles: {type(e).__name__}: {str(e)[:100]}")
         return 0
+
+
+async def load_wewe_rss_feeds(feed_id: str = None, limit: int = 20) -> int:
+    """Load articles from WeWe-RSS (WeChat Official Account feeds).
+    
+    Args:
+        feed_id: Optional specific feed to load (default: all feeds)
+        limit: Maximum articles to load from this source
+        
+    Returns:
+        Number of articles loaded
+    """
+    from ..services.wewe_rss_service import WeWeRSSClient, parse_wewe_rss_feed
+
+    client = WeWeRSSClient()
+    is_healthy = await client.get_health_status()
+    if not is_healthy:
+        raise RuntimeError(f"WeWe-RSS service unavailable at {client.base_url}")
+
+    if feed_id:
+        feed_data = await client.get_feeds(feed_id=feed_id, format="json", limit=limit)
+    else:
+        feed_data = await client.get_all_feeds(format="json")
+
+    if not feed_data:
+        raise RuntimeError("WeWe-RSS returned empty response")
+
+    articles = parse_wewe_rss_feed(feed_data, source_id="wechat_official")
+    if not articles:
+        raise RuntimeError("WeWe-RSS returned no articles")
+
+    inserted = 0
+    for idx, article_data in enumerate(articles[:limit]):
+        article_id = article_data.get("id") or f"wewe_rss_{idx}"
+        title = article_data.get("title")
+        link = article_data.get("link")
+
+        if not title or not link:
+            raise ValueError(f"Invalid WeWe-RSS article payload at index {idx}: missing title or link")
+
+        topic, confidence = classify_topic(f"{title} {article_data.get('summary', '')}")
+        combined_text = f"{title} {article_data.get('summary', '')}"
+        embedding = text_to_embedding(combined_text)
+        category = article_data.get("category", "wechat")
+
+        if category not in state.articles_by_category:
+            state.articles_by_category[category] = []
+        if category not in state.available_categories:
+            state.available_categories.append(category)
+
+        article = {
+            "id": article_id,
+            "title": title,
+            "content": article_data.get("summary", ""),
+            "url": link,
+            "source_id": "wechat_official",
+            "source_name": "WeChat Official Accounts",
+            "published_at": _parse_published(article_data.get("published_at")),
+            "topic": topic,
+            "topic_confidence": confidence,
+            "embedding": embedding,
+            "logo_url": "",
+            "main_image": article_data.get("image_url", ""),
+            "category": category,
+        }
+
+        if article_id not in state.articles:
+            state.articles[article_id] = article
+            state.article_popularity.setdefault(article_id, 0)
+            state.articles_by_category[category].append(article)
+            inserted += 1
+
+    if inserted == 0:
+        raise RuntimeError("WeWe-RSS loaded successfully but produced no new articles")
+
+    print(f"✅ Loaded {inserted} articles from WeWe-RSS (WeChat Official Accounts)")
+    return inserted

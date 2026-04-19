@@ -1,12 +1,32 @@
 version: '3.8'
 
 services:
+  # MySQL - Database for wewe-rss
+  mysql:
+    image: mysql:8.0
+    container_name: geb-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: wewerss_root_pass_123
+      MYSQL_DATABASE: wewe_rss
+      MYSQL_USER: wewe_rss
+      MYSQL_PASSWORD: wewe_rss_pass_123
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
   # wewe-rss - WeChat Official Account RSS/JSON fetcher
   wewe-rss:
     image: cooderl/wewe-rss:latest
     container_name: geb-wewe-rss
     environment:
-      DATABASE_TYPE: sqlite
+      DATABASE_URL: "mysql://wewe_rss:wewe_rss_pass_123@mysql:3306/wewe_rss"
       # Update every 10 minutes for near real-time
       CRON_EXPRESSION: "*/10 * * * *"
       # Get full article content
@@ -19,6 +39,9 @@ services:
       - wewe_rss_data:/app/data
     ports:
       - "4000:4000"
+    depends_on:
+      mysql:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/"]
       interval: 10s
@@ -46,6 +69,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  mysql_data:
   wewe_rss_data:
 
 networks:

@@ -24,6 +24,18 @@ class Settings:
     OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "https://api.ollama.com")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
+    
+    # WeChat OAuth Configuration
+    WECHAT_APP_ID: str = os.getenv("WECHAT_APP_ID", "")
+    WECHAT_APP_SECRET: str = os.getenv("WECHAT_APP_SECRET", "")
+    OAUTH_CALLBACK_URL: str = os.getenv("OAUTH_CALLBACK_URL", "http://localhost:8000/api/wechat-auth/callback")
+    OAUTH_STATE_TTL: int = int(os.getenv("OAUTH_STATE_TTL", "600"))  # 10 minutes
+    TOKEN_REFRESH_BUFFER: int = int(os.getenv("TOKEN_REFRESH_BUFFER", "1800"))  # 30 minutes
+    TOKEN_REFRESH_INTERVAL: int = int(os.getenv("TOKEN_REFRESH_INTERVAL", "3600"))  # 1 hour
+    
+    # RSS Service Configuration
+    WEWE_RSS_URL: str = os.getenv("WEWE_RSS_URL", "http://localhost:4000")
+    WEWE_RSS_AUTH_CODE: str = os.getenv("WEWE_RSS_AUTH_CODE", "")
 
 
 settings = Settings()

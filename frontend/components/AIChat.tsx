@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import api from "../services/api";
+import { api } from "../services/api";
 
 interface AIChatProps {
   articleId: string;

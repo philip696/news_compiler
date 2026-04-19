@@ -1,4 +1,5 @@
 import axios from "axios";
+import { useAuthStore } from "../store/auth";
 
 export const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, ''); // Remove trailing slash
 
@@ -41,3 +42,23 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const requestUrl = String(error?.config?.url || "");
+    const isAuthEndpoint = requestUrl.includes("/api/auth/");
+
+    if (status === 401 && !isAuthEndpoint) {
+      useAuthStore.getState().logout();
+      setAuthToken(null);
+
+      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);

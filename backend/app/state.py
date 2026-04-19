@@ -35,6 +35,12 @@ SOURCES = {
         "domain": "theverge.com",
         "logo_url": "/images/logos/theverge.jpg"
     },
+    "wechat_official": {
+        "id": "wechat_official",
+        "name": "WeChat Official Accounts",
+        "domain": "weixin",
+        "logo_url": "/images/logos/wechat.png"
+    },
 }
 
 # Startup control

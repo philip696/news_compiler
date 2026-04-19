@@ -17,8 +17,10 @@ from .api.sources import router as sources_router
 from .api.behavior import router as behavior_router
 from .api.admin import router as admin_router
 from .api.chatbot import router as chatbot_router
-from .api.wechat import router as wechat_router
 from .api.ai import router as ai_router
+from .api.wewe_rss import router as wewe_rss_router
+from .api.wewe_rss_auth import router as wewe_rss_auth_router
+from .api.wechat_login import router as wechat_login_router
 
 # Initialize database tables
 Base.metadata.create_all(bind=engine)
@@ -40,18 +42,15 @@ if frontend_url := os.getenv("FRONTEND_URL"):
 if vercel_url := os.getenv("VERCEL_URL"):
     allowed_origins.append(f"https://{vercel_url}")
 
-# Allow all localhost/127.0.0.1 ports for local development + this project's Vercel previews.
-local_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
-vercel_preview_regex = r"^https://newscompiler-[a-z0-9-]+\.vercel\.app$"
-
-# Configure CORS with specific origins + regex for preview domains
+# Configure CORS middleware - MUST be first middleware added
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=f"{local_origin_regex}|{vercel_preview_regex}",
+    allow_origins=allowed_origins,  # Explicitly allow these origins
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",  # Allow any localhost port
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+    max_age=3600,
 )
 
 # Mount static files for serving images and data
@@ -67,9 +66,10 @@ async def startup_event():
     try:
         await run_startup_sequence()
     except Exception as e:
-        print(f"⚠️  STARTUP HANDLER ERROR (app will continue): {e}")
+        print(f"❌ STARTUP HANDLER ERROR: {e}")
         import traceback
         traceback.print_exc()
+        raise
 
 
 @app.get("/")
@@ -102,8 +102,10 @@ app.include_router(sources_router)
 app.include_router(behavior_router)
 app.include_router(admin_router)
 app.include_router(chatbot_router)
-app.include_router(wechat_router)
 app.include_router(ai_router)
+app.include_router(wechat_login_router)
+app.include_router(wewe_rss_router)
+app.include_router(wewe_rss_auth_router)
 
 
 @app.on_event("shutdown")

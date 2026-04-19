@@ -46,7 +46,7 @@ async def run_startup_sequence():
     try:
         print(f"[{time.time()-global_start:.2f}s] Importing modules...")
         from . import state
-        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_wechat_articles
+        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_wechat_articles, load_wewe_rss_feeds
         from .clustering.engine import build_story_clusters
         print(f"[{time.time()-global_start:.2f}s] ✅ Modules imported\n")
     except Exception as e:
@@ -88,7 +88,7 @@ async def run_startup_sequence():
         traceback.print_exc()
     
     # Phase 3: WeChat RSS
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/5] Loading WeChat RSS articles...")
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/6] Loading WeChat RSS articles...")
     phase3_start = time.time()
     wechat_count = 0
     try:
@@ -101,14 +101,29 @@ async def run_startup_sequence():
         import traceback
         traceback.print_exc()
     
-    # Phase 4: Startup checkpoint - mark startup complete
-    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 4/5] Startup checkpoint saved")
+    # Phase 4: WeWe-RSS (WeChat Official Account feeds)
+    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 4/6] Loading WeWe-RSS feeds...")
+    phase4_start = time.time()
+    wewe_rss_count = 0
+    try:
+        wewe_rss_count = await load_wewe_rss_feeds(limit=20)
+        phase4_time = time.time() - phase4_start
+        print(f"[{time.time()-global_start:.2f}s] ✅ WeWe-RSS: {wewe_rss_count} articles loaded ({phase4_time:.2f}s)\n")
+    except Exception as e:
+        phase4_time = time.time() - phase4_start
+        print(f"[{time.time()-global_start:.2f}s] ⚠️  WeWe-RSS failed after {phase4_time:.2f}s: {type(e).__name__}: {e}\n")
+        print(f"[{time.time()-global_start:.2f}s] ℹ️  (Development mode: continuing without WeWe-RSS data)\n")
+        import traceback
+        traceback.print_exc()
+    
+    # Phase 5: Startup checkpoint - mark startup complete
+    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 5/6] Startup checkpoint saved")
     state.startup_complete = True
     print(f"[{time.time()-global_start:.2f}s] 💾 state.startup_complete = True")
     print(f"[{time.time()-global_start:.2f}s] 📊 Articles loaded: {len(state.articles)} across {len(state.available_categories)} categories\n")
     
-    # Phase 5: Background clustering (non-blocking)
-    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 5/5] Starting background clustering...")
+    # Phase 6: Background clustering (non-blocking)
+    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 6/6] Starting background clustering...")
     try:
         import threading
         
@@ -135,8 +150,8 @@ async def run_startup_sequence():
     
     # Initialize background scheduler for periodic tasks (Hacker News, etc.)
     try:
-        from workers.scheduler import get_scheduler
-        scheduler = get_scheduler()
+        from workers.scheduler import BackgroundJobScheduler
+        scheduler = BackgroundJobScheduler()
         scheduler.start_scheduler()
         print(f"[{time.time()-global_start:.2f}s] ✅ Background scheduler started\n")
     except Exception as e:

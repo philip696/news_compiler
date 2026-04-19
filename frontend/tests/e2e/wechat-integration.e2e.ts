@@ -1,0 +1,357 @@
+import { test, expect } from '../fixtures/auth'
+import { WeChatLoginPage } from '../pages/WeChatLoginPage'
+import { WeChatAccountsPage } from '../pages/WeChatAccountsPage'
+import { WeChatArticlesPage } from '../pages/WeChatArticlesPage'
+import {
+  mockAuthStartResponse,
+  mockAuthCallbackResponse,
+  mockAccountsResponse,
+  mockArticleListResponse,
+  mockWeChatAccount,
+} from '../fixtures/data'
+
+test.describe('WeChat Integration', () => {
+  test.beforeEach(async ({ page, context }) => {
+    // Set up API mocks for auth endpoints
+    await page.route('**/api/wechat/auth/start', (route) =>
+      route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAuthStartResponse),
+      })
+    )
+
+    await page.route('**/api/wechat/auth/callback', (route) =>
+      route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAuthCallbackResponse),
+      })
+    )
+  })
+
+  test('Test: WeChat login flow', async ({ page, unauthenticatedPage }) => {
+    const loginPage = new WeChatLoginPage(unauthenticatedPage)
+    await loginPage.goto()
+
+    // Verify login page is displayed
+    await expect(loginPage.loginButton).toBeVisible()
+
+    // Mock the OAuth callback redirect
+    await unauthenticatedPage.route('**/api/wechat/auth/callback', async (route) => {
+      // Simulate OAuth callback
+      await route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAuthCallbackResponse),
+      })
+
+      // Simulate redirect to callback page with auth code
+      await unauthenticatedPage.goto(
+        '/wechat/callback?code=mock_auth_code_123&state=mock_state_123'
+      )
+    })
+
+    // Click login button
+    await loginPage.clickLoginButton()
+
+    // Wait for token to be stored in localStorage
+    const storedAuth = await unauthenticatedPage.evaluate(() => {
+      const stored = localStorage.getItem('wechat-storage')
+      return stored ? JSON.parse(stored) : null
+    })
+
+    expect(storedAuth).toBeTruthy()
+    expect(storedAuth.state.wechatAuthToken).toBeTruthy()
+    expect(storedAuth.state.isWeChatLogged).toBe(true)
+
+    // Verify redirect to accounts page
+    await unauthenticatedPage.waitForURL('/wechat/accounts')
+    expect(unauthenticatedPage.url()).toContain('/wechat/accounts')
+  })
+
+  test('Test: Add WeChat account', async ({ page, authenticatedPage }) => {
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      if (route.request().method() === 'GET') {
+        return route.resolve({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockAccountsResponse),
+        })
+      } else if (route.request().method() === 'POST') {
+        // Add new account
+        return route.resolve({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: '4',
+            wechat_account_id: 'new_test_account_004',
+            wechat_account_name: 'New Test Account',
+            avatar: 'https://example.com/avatar4.jpg',
+            is_muted: false,
+            last_sync_time: new Date().toISOString(),
+          }),
+        })
+      }
+    })
+
+    const accountsPage = new WeChatAccountsPage(authenticatedPage)
+    await accountsPage.goto()
+
+    // Verify initial accounts are loaded
+    const initialCount = await accountsPage.getAccountCount()
+    expect(initialCount).toBeGreaterThan(0)
+
+    // Click add button
+    await accountsPage.clickAddButton()
+    await expect(accountsPage.modal).toBeVisible()
+
+    // Fill in account ID
+    const newAccountId = 'new_test_account_004'
+    await accountsPage.fillAccountId(newAccountId)
+
+    // Submit form
+    await accountsPage.submitAddForm()
+
+    // Wait for success and modal to close
+    await authenticatedPage.waitForTimeout(500)
+
+    // Verify the new account appears in the list
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          accounts: [
+            ...mockAccountsResponse.accounts,
+            {
+              id: '4',
+              wechat_account_id: newAccountId,
+              wechat_account_name: 'New Test Account',
+              avatar: 'https://example.com/avatar4.jpg',
+              is_muted: false,
+              last_sync_time: new Date().toISOString(),
+            },
+          ],
+          total: mockAccountsResponse.accounts.length + 1,
+        }),
+      })
+    })
+
+    // Refresh to verify new account
+    await authenticatedPage.reload()
+    const finalCount = await accountsPage.getAccountCount()
+    expect(finalCount).toBe(initialCount + 1)
+  })
+
+  test('Test: Manual update account', async ({ page, authenticatedPage }) => {
+    let lastSyncTime = new Date().toISOString()
+
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAccountsResponse),
+      })
+    })
+
+    await authenticatedPage.route('**/api/wewe-rss/feeds/**/update', (route) => {
+      lastSyncTime = new Date().toISOString()
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...mockWeChatAccount,
+          last_sync_time: lastSyncTime,
+        }),
+      })
+    })
+
+    const accountsPage = new WeChatAccountsPage(authenticatedPage)
+    await accountsPage.goto()
+
+    // Record initial sync time
+    const initialSyncText = await accountsPage.getLastSyncTime()
+
+    // Click update button on first account
+    await accountsPage.clickUpdateButton(0)
+
+    // Wait for sync to complete
+    await authenticatedPage.waitForTimeout(1000)
+
+    // Refresh page
+    await authenticatedPage.reload()
+
+    // Verify last_sync_time has been updated
+    const updatedSyncText = await accountsPage.getLastSyncTime()
+    expect(updatedSyncText).toBeTruthy()
+  })
+
+  test('Test: View articles', async ({ page, authenticatedPage }) => {
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAccountsResponse),
+      })
+    })
+
+    await authenticatedPage.route('**/api/wewe-rss/feeds/all**', (route) => {
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockArticleListResponse),
+      })
+    })
+
+    const articlesPage = new WeChatArticlesPage(authenticatedPage)
+    await articlesPage.goto()
+
+    // Verify articles are loaded
+    const articleCount = await articlesPage.getArticleCount()
+    expect(articleCount).toBeGreaterThan(0)
+
+    // Get first article title
+    const firstArticleTitle = await articlesPage.getArticleTitle(0)
+    expect(firstArticleTitle).toBeTruthy()
+
+    // Click on first article
+    await articlesPage.clickArticle(0)
+
+    // Wait for detail modal to open
+    await expect(articlesPage.detailModal).toBeVisible()
+
+    // Verify detail content is displayed
+    const detailTitle = await articlesPage.getDetailTitle()
+    expect(detailTitle).toBeTruthy()
+
+    // Close detail modal
+    await articlesPage.closeDetailModal()
+    await expect(articlesPage.detailModal).not.toBeVisible()
+  })
+
+  test('Test: Delete account', async ({ page, authenticatedPage }) => {
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      if (route.request().method() === 'GET') {
+        return route.resolve({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockAccountsResponse),
+        })
+      }
+    })
+
+    await authenticatedPage.route('**/api/wewe-rss/feeds/*', (route) => {
+      if (route.request().method() === 'DELETE') {
+        return route.resolve({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      }
+    })
+
+    const accountsPage = new WeChatAccountsPage(authenticatedPage)
+    await accountsPage.goto()
+
+    // Record initial account count
+    const initialCount = await accountsPage.getAccountCount()
+    expect(initialCount).toBeGreaterThan(0)
+
+    // Set up updated accounts response (one less)
+    const updatedAccounts = mockAccountsResponse.accounts.slice(1)
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          accounts: updatedAccounts,
+          total: updatedAccounts.length,
+        }),
+      })
+    })
+
+    // Click delete button on first account
+    await accountsPage.clickDeleteButton(0)
+
+    // Handle confirmation dialog if present
+    await authenticatedPage.on('dialog', (dialog) => {
+      dialog.accept()
+    })
+
+    // Wait for deletion
+    await authenticatedPage.waitForTimeout(500)
+
+    // Reload page
+    await authenticatedPage.reload()
+
+    // Verify account count decreased
+    const finalCount = await accountsPage.getAccountCount()
+    expect(finalCount).toBeLessThan(initialCount)
+  })
+
+  test('Test: Search articles', async ({ page, authenticatedPage }) => {
+    const mockSearchResponse = {
+      articles: [mockArticleListResponse.articles[0]],
+      total: 1,
+      page: 1,
+      limit: 20,
+      has_more: false,
+    }
+
+    await authenticatedPage.route('**/api/wewe-rss/feeds', (route) => {
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockAccountsResponse),
+      })
+    })
+
+    await authenticatedPage.route('**/api/wewe-rss/feeds/all**', (route) => {
+      const url = new URL(route.request().url())
+      const searchQuery = url.searchParams.get('search')
+
+      if (searchQuery && searchQuery.length > 0) {
+        return route.resolve({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockSearchResponse),
+        })
+      }
+
+      return route.resolve({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockArticleListResponse),
+      })
+    })
+
+    const articlesPage = new WeChatArticlesPage(authenticatedPage)
+    await articlesPage.goto()
+
+    // Get initial article count
+    const initialCount = await articlesPage.getArticleCount()
+    expect(initialCount).toBeGreaterThan(1)
+
+    // Search for articles
+    const searchQuery = 'Test Article'
+    await articlesPage.searchArticles(searchQuery)
+
+    // Wait for search results
+    await authenticatedPage.waitForLoadState('networkidle')
+
+    // Verify filtered results
+    const searchResultCount = await articlesPage.getArticleCount()
+    expect(searchResultCount).toBeLessThanOrEqual(initialCount)
+
+    // Clear search
+    await articlesPage.clearSearch()
+
+    // Wait for all articles to load again
+    await authenticatedPage.waitForLoadState('networkidle')
+
+    // Verify all articles are shown again
+    const finalCount = await articlesPage.getArticleCount()
+    expect(finalCount).toBe(initialCount)
+  })
+})

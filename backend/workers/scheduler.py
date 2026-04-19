@@ -1,5 +1,5 @@
 """
-Scheduler for background jobs like Hacker News scraping.
+Scheduler for background jobs: Hacker News scraping, WeChat article sync.
 Run this as a separate process or in its own thread.
 """
 import logging
@@ -7,8 +7,6 @@ import asyncio
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
-
-from workers.hacker_news_scraper import HackerNewsScraper
 
 logger = logging.getLogger(__name__)
 
@@ -26,30 +24,32 @@ class BackgroundJobScheduler:
             logger.warning("Scheduler already running")
             return
         
-        # Schedule Hacker News scraper
-        # Runs every day at 2 AM UTC (customize as needed)
+        # Hacker News scraper runs daily at 2 AM UTC
         self.scheduler.add_job(
             self._scrape_hacker_news,
-            trigger=CronTrigger(hour=2, minute=0),
-            id="hacker_news_daily",
-            name="Fetch Hacker News (Daily)",
+            CronTrigger(hour=2, minute=0),
+            id="hacker_news_scraper",
+            name="Scrape Hacker News (Daily 2 AM UTC)",
             replace_existing=True,
-            max_instances=1,  # Prevent overlap
+            max_instances=1,
         )
         
-        # Optional: Run every 6 hours instead
-        # self.scheduler.add_job(
-        #     self._scrape_hacker_news,
-        #     trigger=CronTrigger(hour='*/6'),
-        #     id="hacker_news_6hourly",
-        #     name="Fetch Hacker News (Every 6 hours)",
-        #     max_instances=1,
-        # )
+        # WeChat sync runs every 10 minutes
+        self.scheduler.add_job(
+            self._sync_wechat_articles,
+            CronTrigger(minute="*/10"),
+            id="wechat_sync_all_accounts",
+            name="Sync WeChat Articles (Every 10 minutes)",
+            replace_existing=True,
+            max_instances=1,
+        )
         
         self.scheduler.start()
         self.is_running = True
         logger.info("✅ Background scheduler started")
-        logger.info("   📅 Job scheduled: Hacker News scraping at 02:00 UTC daily")
+        logger.info("   📅 Jobs scheduled:")
+        logger.info("      - Hacker News scraper (Daily at 2 AM UTC)")
+        logger.info("      - WeChat article sync (Every 10 minutes)")
     
     def stop_scheduler(self):
         """Stop the background scheduler."""
@@ -60,36 +60,34 @@ class BackgroundJobScheduler:
     
     @staticmethod
     def _scrape_hacker_news():
-        """
-        Task: Scrape Hacker News from Firebase API.
-        Runs async task in sync context.
-        """
-        timestamp = datetime.utcnow().isoformat()
-        logger.info(f"[{timestamp}] 🚀 Starting Hacker News scrape...")
-        
+        """Scrape Hacker News."""
         try:
+            logger.info("[SCHEDULER] Running Hacker News scraper...")
+            # Import inside to avoid circular imports
+            from workers.hacker_news_scraper import HackerNewsScraper
             scraper = HackerNewsScraper()
-            
-            # Run async scraper
-            count = asyncio.run(scraper.fetch_and_process(
-                story_type="top",  # Options: "top", "new", "best"
-                limit=50            # Fetch top 50 stories
-            ))
-            
-            logger.info(f"[{datetime.utcnow().isoformat()}] ✅ Hacker News scrape completed. Processed {count} items")
+            scraper.scrape()
+            logger.info("[SCHEDULER] Hacker News scraper completed")
         except Exception as e:
-            logger.error(f"[{datetime.utcnow().isoformat()}] ❌ Hacker News scrape failed: {e}", exc_info=True)
+            logger.error(f"[SCHEDULER] Hacker News scraper error: {e}")
     
-    def get_jobs(self):
-        """List all scheduled jobs."""
-        return self.scheduler.get_jobs()
+    @staticmethod
+    def _sync_wechat_articles():
+        """Sync WeChat articles."""
+        try:
+            logger.info("[SCHEDULER] Running WeChat article sync...")
+            # Import inside to avoid circular imports
+            from app.workers.wechat_scheduler import job_sync_all_accounts
+            asyncio.run(job_sync_all_accounts())
+            logger.info("[SCHEDULER] WeChat article sync completed")
+        except Exception as e:
+            logger.error(f"[SCHEDULER] WeChat article sync error: {e}")
 
 
-# Global scheduler instance
 _scheduler_instance = None
 
 
-def get_scheduler() -> BackgroundJobScheduler:
+def get_scheduler_instance() -> BackgroundJobScheduler:
     """Get or create scheduler instance."""
     global _scheduler_instance
     if _scheduler_instance is None:
