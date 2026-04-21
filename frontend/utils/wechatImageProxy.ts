@@ -4,11 +4,10 @@
  * GET /api/wechat/img proxies with the correct headers — use it for every
  * <img> and CSS url() that points at those hosts.
  *
- * In production, set NEXT_PUBLIC_API_URL to your public API origin (e.g. Railway);
- * otherwise the browser may call localhost and images will fail.
+ * Reuse the same origin normalization as axios (`services/api.ts`) so a trailing
+ * slash in NEXT_PUBLIC_API_URL does not produce `//api/...` (404 on Railway).
  */
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8007';
+import { BASE_URL, joinUrl } from '../services/api';
 
 /** Hostname suffixes allowed by /api/wechat/img — keep in sync with backend wechat.py. */
 export function isWeChatCdnUrl(raw: string | undefined | null): boolean {
@@ -25,5 +24,5 @@ export function isWeChatCdnUrl(raw: string | undefined | null): boolean {
 
 export function wechatCdnImageProxyUrl(picUrl: string | undefined | null): string {
   if (!picUrl) return '';
-  return `${API_BASE}/api/wechat/img?url=${encodeURIComponent(picUrl)}`;
+  return `${joinUrl(BASE_URL, '/api/wechat/img')}?url=${encodeURIComponent(picUrl)}`;
 }

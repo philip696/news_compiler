@@ -124,16 +124,20 @@ class AppRepository:
             self._session.commit()
             self._session.refresh(u)
             return {"id": u.id, "username": u.username}
+        # supabase-py: do not chain .select() after .insert() (not supported).
         r = (
             self._sb.table("users")
             .insert({"username": username, "hashed_password": hashed_password})
-            .select("id, username")
             .execute()
         )
-        row = (r.data or [None])[0]
-        if not row:
+        rows = r.data or []
+        if rows:
+            row = rows[0]
+            return {"id": row["id"], "username": row["username"]}
+        u = self.user_get_by_username(username)
+        if not u:
             raise RuntimeError("Supabase user insert returned no row")
-        return {"id": row["id"], "username": row["username"]}
+        return {"id": u["id"], "username": u["username"]}
 
     # --- bookmarks ------------------------------------------------------------
     def bookmark_exists(self, user_id: int, article_id: str) -> bool:
@@ -500,11 +504,14 @@ class AppRepository:
                 "has_history": 1,
                 "status": ENABLE,
             }
-            r = self._sb.table("weread_feeds").insert(ins).select("*").execute()
+            r = self._sb.table("weread_feeds").insert(ins).execute()
             rows = r.data or []
-            if not rows:
+            if rows:
+                return self._feed_row_from_dict(rows[0])
+            g = self.weread_feed_get(user_id, mid)
+            if not g:
                 raise RuntimeError("weread_feed insert failed")
-            return self._feed_row_from_dict(rows[0])
+            return g
         patch: dict = {}
         if mp.get("name"):
             patch["mp_name"] = mp["name"]

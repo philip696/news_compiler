@@ -3,10 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import { BASE_URL, joinUrl } from '../services/api';
 import { wechatCdnImageProxyUrl } from '../utils/wechatImageProxy';
 import { QRCodeSVG } from 'qrcode.react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8007';
 
 // Read the GEB JWT stored by the main auth flow
 const getGebToken = (): string | null => {
@@ -76,7 +75,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
   // ── GET QR ──────────────────────────────────────────────────────────── //
   const startQrMutation = useMutation({
     mutationFn: async () => {
-      const res = await axios.get(`${API_BASE}/api/wechat/qr`);
+      const res = await axios.get(joinUrl(BASE_URL, '/api/wechat/qr'));
       return res.data as { uuid: string; scanUrl: string };
     },
     onSuccess: (data) => {
@@ -96,7 +95,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
   const { data: loginStatus } = useQuery({
     queryKey: ['wechatLoginStatus', uuid],
     queryFn: async () => {
-      const res = await axios.get(`${API_BASE}/api/wechat/login-status`, {
+      const res = await axios.get(joinUrl(BASE_URL, '/api/wechat/login-status'), {
         params: { uuid },
         headers: gebToken ? authHeaders() : {},
       });
@@ -122,7 +121,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
   const { data: accounts = [] } = useQuery<WeReadAccount[]>({
     queryKey: ['wereadAccounts'],
     queryFn: async () => {
-      const res = await axios.get(`${API_BASE}/api/wechat/accounts`, {
+      const res = await axios.get(joinUrl(BASE_URL, '/api/wechat/accounts'), {
         headers: authHeaders(),
       });
       return res.data;
@@ -132,7 +131,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
 
   const deleteAccountMutation = useMutation({
     mutationFn: async (vid: string) => {
-      await axios.delete(`${API_BASE}/api/wechat/accounts/${vid}`, {
+      await axios.delete(joinUrl(BASE_URL, `/api/wechat/accounts/${vid}`), {
         headers: authHeaders(),
       });
     },
@@ -144,7 +143,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
   const { data: feeds = [] } = useQuery<Feed[]>({
     queryKey: ['wereadFeeds'],
     queryFn: async () => {
-      const res = await axios.get(`${API_BASE}/api/wechat/mps`, {
+      const res = await axios.get(joinUrl(BASE_URL, '/api/wechat/mps'), {
         headers: authHeaders(),
       });
       return res.data;
@@ -163,7 +162,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
         // strip one layer of wrapping quotes / brackets
         .replace(/^["'`<([]+|["'`>)\],.;]+$/g, '');
       const res = await axios.post(
-        `${API_BASE}/api/wechat/mps`,
+        joinUrl(BASE_URL, '/api/wechat/mps'),
         { wxsLink: cleaned },
         { headers: authHeaders() }
       );
@@ -187,7 +186,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
   // ── Remove feed ─────────────────────────────────────────────────────── //
   const deleteFeedMutation = useMutation({
     mutationFn: async (mpId: string) => {
-      await axios.delete(`${API_BASE}/api/wechat/mps/${mpId}`, {
+      await axios.delete(joinUrl(BASE_URL, `/api/wechat/mps/${mpId}`), {
         headers: authHeaders(),
       });
     },
@@ -200,7 +199,7 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
     setSyncingMp(mpId);
     try {
       await axios.post(
-        `${API_BASE}/api/wechat/mps/${mpId}/sync${history ? '?history=1' : ''}`,
+        `${joinUrl(BASE_URL, `/api/wechat/mps/${mpId}/sync`)}${history ? '?history=1' : ''}`,
         {},
         { headers: authHeaders() }
       );
