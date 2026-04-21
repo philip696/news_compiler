@@ -143,15 +143,29 @@ export default function HomePage() {
     [stories, exploreStories]
   );
 
-  // Merged deduped category list
+  // Categories hidden from the sidebar (served by backend but suppressed in UI)
+  const HIDDEN_CATEGORIES = useMemo(
+    () =>
+      new Set<string>([
+        "🔗 WeChat Official Accounts",
+        "🌍 World News",
+        "💻 Technology",
+        "📊 Business",
+        "💰 Finance",
+      ]),
+    []
+  );
+
+  // Merged deduped category list (with hidden categories removed)
   const allCategories = useMemo(() => {
     const seen = new Set<string>();
     const merged: string[] = [];
     for (const c of [...(categoriesData || []), ...exploreCategoriesData]) {
+      if (HIDDEN_CATEGORIES.has(c)) continue;
       if (!seen.has(c)) { seen.add(c); merged.push(c); }
     }
     return merged;
-  }, [categoriesData, exploreCategoriesData]);
+  }, [categoriesData, exploreCategoriesData, HIDDEN_CATEGORIES]);
 
   const { data: wereadFeeds = [] } = useQuery<WeReadFeed[]>({
     queryKey: ["wereadFeeds"],
