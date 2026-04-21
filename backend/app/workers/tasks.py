@@ -1,140 +1,138 @@
+from __future__ import annotations
+
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
-from typing import List, Dict
+from typing import Any
 
-from app.workers.celery_app import app
-from app.services.wewe_rss_service import WeWeRSSClient, parse_wewe_rss_feed
+import httpx
+import redis
+
+from app.core.config import settings
+from app.db.app_repository import AppRepository
 from app.db.database import SessionLocal
-from app.db.models import WeChatArticle, WeChat
-from sqlalchemy.exc import IntegrityError
+from app.db.models import WeReadArticle, WeReadFeed
+from app.db.supabase_client import get_supabase_client, use_supabase_runtime
+from app.services.weread_service import DEFAULT_PLATFORM_URL, WeReadService
+from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 
-@app.task(name='app.workers.tasks.sync_wechat_articles', bind=True)
-def sync_wechat_articles(self):
-    """
-    Periodic task: Sync WeChat articles from wewe-rss gateway
-    Runs every 10 minutes to fetch latest articles from subscribed accounts
-    """
+async def _run_weread_sync(
+    repo: AppRepository, user_ids: list[int], platform_url: str
+) -> dict[str, Any]:
+    timeout = httpx.Timeout(15.0, connect=10.0)
+    errors: list[dict[str, Any]] = []
+    ok = 0
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        svc = WeReadService(client=client, platform_url=platform_url)
+        for uid in user_ids:
+            try:
+                await svc.refresh_all_mp_articles_and_update_feed(repo, uid)
+                ok += 1
+            except Exception as e:
+                logger.error(
+                    "[celery] weread sync failed user_id=%s: %s", uid, e, exc_info=True
+                )
+                errors.append({"user_id": uid, "error": str(e)})
+    ts = datetime.now(timezone.utc).isoformat()
+    if not user_ids:
+        return {
+            "status": "skipped",
+            "message": "no users with weread_feeds",
+            "users_total": 0,
+            "users_ok": 0,
+            "errors": [],
+            "timestamp": ts,
+        }
+    st = "success" if not errors else ("partial" if ok else "error")
+    return {
+        "status": st,
+        "users_total": len(user_ids),
+        "users_ok": ok,
+        "errors": errors,
+        "timestamp": ts,
+    }
+
+
+@celery_app.task(name="app.workers.tasks.sync_weread_feeds")
+def sync_weread_feeds() -> dict[str, Any]:
+    """Periodic task: refresh WeRead articles for every user that has feeds."""
+    platform_url = os.getenv("PLATFORM_URL", DEFAULT_PLATFORM_URL)
     try:
-        logger.info("Starting WeChat article sync from WeWe-RSS gateway...")
-        
-        # Run async function in sync context using the new gateway
-        wewe_client = WeWeRSSClient()
-        feeds = asyncio.run(wewe_client.get_all_feeds(format="json"))
-        
-        if not feeds:
-            logger.warning("No feeds returned from WeWe-RSS gateway")
-            return {
-                "status": "warning",
-                "message": "No feeds returned",
-                "articles_synced": 0,
-            }
+        if use_supabase_runtime():
+            repo = AppRepository(supabase=get_supabase_client())
+            user_ids = repo.weread_feed_distinct_user_ids()
+            logger.info(
+                "[celery] sync_weread_feeds (supabase) users=%s", len(user_ids)
+            )
+            return asyncio.run(_run_weread_sync(repo, user_ids, platform_url))
 
         db = SessionLocal()
-        total_synced = 0
-        errors = []
-
         try:
-            # Parse feeds using the gateway response parser
-            articles = parse_wewe_rss_feed(
-                {"feeds": feeds} if not isinstance(feeds, list) else {"feeds": feeds}
+            repo = AppRepository(session=db)
+            user_ids = repo.weread_feed_distinct_user_ids()
+            logger.info(
+                "[celery] sync_weread_feeds (sqlalchemy) users=%s", len(user_ids)
             )
-            
-            logger.info(f"Processing {len(articles)} articles from WeWe-RSS gateway")
-
-            for article_data in articles:
-                try:
-                    external_id = article_data.get("id") or article_data.get("article_id")
-                    if not external_id:
-                        logger.warning("Skipping article without ID")
-                        continue
-
-                    existing = db.query(WeChatArticle).filter_by(
-                        external_id=external_id
-                    ).first()
-
-                    if existing:
-                        continue  # Article already in DB
-
-                    source_id = article_data.get("source_id", "wechat_official")
-                    
-                    new_article = WeChatArticle(
-                        title=article_data.get("title"),
-                        content=article_data.get("content"),
-                        author=article_data.get("author"),
-                        source_id=source_id,
-                        external_id=external_id,
-                        link=article_data.get("link") or article_data.get("url"),
-                        pub_date=article_data.get("published_at") or article_data.get("pub_date"),
-                    )
-                    db.add(new_article)
-                    total_synced += 1
-
-                except IntegrityError:
-                    db.rollback()
-                    continue
-                except Exception as e:
-                    logger.error(f"Failed to process article {external_id}: {e}")
-                    db.rollback()
-                    errors.append(f"Article error: {external_id}")
-                    continue
-
-            # Commit all articles
-            try:
-                db.commit()
-            except Exception as e:
-                logger.error(f"Failed to commit articles: {e}")
-                db.rollback()
-                errors.append("Commit error")
-
+            return asyncio.run(_run_weread_sync(repo, user_ids, platform_url))
         finally:
             db.close()
-
-        result = {
-            "status": "success",
-            "articles_synced": total_synced,
+    except Exception as e:
+        logger.error("[celery] sync_weread_feeds fatal: %s", e, exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "users_total": 0,
+            "users_ok": 0,
+            "errors": [],
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-        if errors:
-            result["errors"] = errors
-            result["status"] = "partial" if total_synced > 0 else "error"
 
-        logger.info(f"WeChat sync complete: {result}")
-        return result
-
-    except Exception as e:
-        logger.error(f"Fatal error in sync_wechat_articles: {e}", exc_info=True)
-        return {
-            "status": "error",
-            "message": str(e),
-            "articles_synced": 0,
-        }
-
-
-@app.task(name='app.workers.tasks.get_wechat_health')
-def get_wechat_health():
-    """Health check task for wewe-rss connectivity"""
+@celery_app.task(name="app.workers.tasks.weread_celery_health")
+def weread_celery_health() -> dict[str, Any]:
+    """DB row counts for WeRead tables + Redis broker ping."""
+    redis_ok = False
+    redis_error: str | None = None
     try:
-        db = SessionLocal()
-        try:
-            # Check if we have any WeChat data
-            wechat_count = db.query(WeChat).count()
-            article_count = db.query(WeChatArticle).count()
-            
-            return {
-                "status": "healthy",
-                "wechat_accounts": wechat_count,
-                "articles_total": article_count,
-            }
-        finally:
-            db.close()
+        r = redis.from_url(settings.celery_broker_url)
+        redis_ok = bool(r.ping())
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        redis_error = str(e)
+        logger.warning("[celery] redis ping failed: %s", e)
+
+    try:
+        if use_supabase_runtime():
+            sb = get_supabase_client()
+            fr = sb.table("weread_feeds").select("id", count="exact").limit(1).execute()
+            ar = (
+                sb.table("weread_articles").select("id", count="exact").limit(1).execute()
+            )
+            feed_count = fr.count if fr.count is not None else 0
+            article_count = ar.count if ar.count is not None else 0
+        else:
+            db = SessionLocal()
+            try:
+                feed_count = db.query(WeReadFeed).count()
+                article_count = db.query(WeReadArticle).count()
+            finally:
+                db.close()
+
+        return {
+            "status": "healthy",
+            "redis": redis_ok,
+            "redis_error": redis_error,
+            "weread_feed_rows": feed_count,
+            "weread_article_rows": article_count,
+        }
+    except Exception as e:
+        logger.error("[celery] weread_celery_health failed: %s", e, exc_info=True)
         return {
             "status": "error",
             "message": str(e),
+            "redis": redis_ok,
+            "redis_error": redis_error,
         }

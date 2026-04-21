@@ -126,13 +126,21 @@ Typical flow: register or log in → `GET /api/wechat/qr` → user scans → pol
 
 ## Worker (Celery)
 
+WeRead feeds are refreshed on a schedule (default every 10 minutes). Override with `CELERY_WEREAD_SYNC_MINUTES` (1–59).
+
 ```bash
 cd backend
 source .venv/bin/activate
-celery -A workers.celery_app.celery_app worker --loglevel=info
+celery -A app.workers worker --loglevel=info
 ```
 
-Requires Redis URLs in `.env` (`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`).
+Beat (scheduler) in a second terminal:
+
+```bash
+celery -A app.workers beat --loglevel=info
+```
+
+Requires Redis URLs in `.env` (`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`). Uses the same persistence as the API: SQLAlchemy when Supabase env vars are unset, otherwise Supabase REST.
 
 ## Tests
 

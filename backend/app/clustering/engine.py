@@ -56,22 +56,30 @@ def build_story_clusters() -> int:
         
         print(f"📊 Clustering {len(articles)} articles across {len(articles_by_topic)} topics...")
         
-        # Process each topic independently
+        # Process each topic independently (cap size: pairwise similarity is O(n²))
+        max_topic = max(1, settings.cluster_max_articles_per_topic)
         for topic, topic_articles in articles_by_topic.items():
             if not topic_articles:
                 continue
-            
-            # Within-topic clustering: compare only articles in same topic
-            ids = [a["id"] for a in topic_articles]
-            vectors = [a["embedding"] for a in topic_articles]
-            
-            # Compute pairwise similarity matrix (only within topic)
+
+            topic_sorted = sorted(
+                topic_articles, key=lambda x: x["published_at"], reverse=True
+            )
+            if len(topic_sorted) > max_topic:
+                to_cluster = topic_sorted[:max_topic]
+                remainder = topic_sorted[max_topic:]
+            else:
+                to_cluster = topic_sorted
+                remainder = []
+
+            ids = [a["id"] for a in to_cluster]
+            vectors = [a["embedding"] for a in to_cluster]
+
             sims = {}
             for i in range(len(vectors)):
                 for j in range(i + 1, len(vectors)):
                     sims[(i, j)] = _cosine_similarity(vectors[i], vectors[j])
-            
-            # Build connectivity graph
+
             graph = {article_id: set() for article_id in ids}
             for i, source_id in enumerate(ids):
                 graph[source_id].add(source_id)
@@ -79,18 +87,18 @@ def build_story_clusters() -> int:
                     target_id = ids[j]
                     article_a = state.articles[source_id]
                     article_b = state.articles[target_id]
-                    
-                    time_gap = abs(article_a["published_at"] - article_b["published_at"]) <= timedelta(hours=48)
+
+                    time_gap = abs(
+                        article_a["published_at"] - article_b["published_at"]
+                    ) <= timedelta(hours=48)
                     similar = sims.get((i, j), 0) >= settings.similarity_threshold
-                    
+
                     if time_gap and similar:
                         graph[source_id].add(target_id)
                         graph[target_id].add(source_id)
-            
-            # Extract connected components
+
             components = _connected_components(graph)
-            
-            # Create clusters from components
+
             for comp in components:
                 comp_articles = [state.articles[a_id] for a_id in comp]
                 comp_articles.sort(key=lambda x: x["published_at"], reverse=True)
@@ -98,7 +106,7 @@ def build_story_clusters() -> int:
                 sources = sorted({article["source_name"] for article in comp_articles})
                 summary = f"{len(comp_articles)} related articles across {len(sources)} sources"
                 cluster_id = str(uuid.uuid4())
-                
+
                 new_clusters[cluster_id] = {
                     "cluster_id": cluster_id,
                     "topic": topic,
@@ -107,6 +115,18 @@ def build_story_clusters() -> int:
                     "article_ids": [a["id"] for a in comp_articles],
                     "sources": sources,
                     "created_at": comp_articles[0]["published_at"],
+                }
+
+            for article in remainder:
+                cluster_id = str(uuid.uuid4())
+                new_clusters[cluster_id] = {
+                    "cluster_id": cluster_id,
+                    "topic": topic,
+                    "headline": article["title"],
+                    "summary": "1 article",
+                    "article_ids": [article["id"]],
+                    "sources": [article["source_name"]],
+                    "created_at": article["published_at"],
                 }
         
         state.clusters = new_clusters

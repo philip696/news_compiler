@@ -1,12 +1,14 @@
 import { motion } from "framer-motion";
 import { useRouter } from "next/router";
 import { BASE_URL, joinUrl } from "../services/api";
+import { wechatCdnImageProxyUrl } from "../utils/wechatImageProxy";
 
 export interface Article {
   id: string;
   title: string;
   content?: string;
   main_image?: string;
+  logo_url?: string;
   source_name?: string;
   published_at: string;
   url?: string;
@@ -61,6 +63,44 @@ const getLogoPath = (sourceId: string | undefined): string => {
   return `${BASE_URL}/data/logos/wired.png`;
 };
 
+const isWeChatArticle = (article: Article): boolean => {
+  const t = (article.topic || article.category || "").toLowerCase();
+  if (t === "wechat") return true;
+  return (article.url || "").includes("mp.weixin.qq.com");
+};
+
+const needsWechatImageProxy = (article: Article, imageUrl: string): boolean => {
+  if (isWeChatArticle(article)) return true;
+  return /mmbiz\.qpic\.cn|wx\.qlogo\.cn/i.test(imageUrl);
+};
+
+/** Same background treatment as WeChat story cards on the home grid (proxy + gradient fallback). */
+const getCardBackgroundImage = (article: Article): string => {
+  const raw = article.main_image?.trim();
+  if (isWeChatArticle(article) && !raw) {
+    return "linear-gradient(135deg, #1a472a 0%, #2d6a4f 100%)";
+  }
+
+  let imageUrl =
+    raw ||
+    `https://images.unsplash.com/photo-${1500000000000 + (article.id.charCodeAt(0) % 10000)}?auto=format&fit=crop&w=800&q=80`;
+
+  if (imageUrl.startsWith("/data")) {
+    imageUrl = joinUrl(BASE_URL, imageUrl);
+  } else if (needsWechatImageProxy(article, raw || imageUrl)) {
+    imageUrl = wechatCdnImageProxyUrl(raw || imageUrl);
+  }
+
+  return `url("${imageUrl.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
+};
+
+const footerLogoSrc = (article: Article): string => {
+  if (isWeChatArticle(article) && article.logo_url?.trim()) {
+    return wechatCdnImageProxyUrl(article.logo_url);
+  }
+  return getLogoPath(article.source_name);
+};
+
 export default function ArticleCard({ 
   article, 
   onBookmark, 
@@ -104,11 +144,8 @@ export default function ArticleCard({
     router.push(`/article/${article.id}`);
   };
 
-  let imageUrl = article.main_image || `https://images.unsplash.com/photo-${1500000000000 + (article.id.charCodeAt(0) % 10000)}?auto=format&fit=crop&w=800&q=80`;
-  
-  if (imageUrl.startsWith('/data')) {
-    imageUrl = joinUrl(BASE_URL, imageUrl);
-  }
+  const bgImage = getCardBackgroundImage(article);
+  const wechat = isWeChatArticle(article);
 
   return (
     <motion.article
@@ -119,12 +156,16 @@ export default function ArticleCard({
       className={`${className} group relative flex flex-col overflow-hidden rounded-3xl bg-slate-900 shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer h-full w-full min-h-[250px] border border-white/10`}
     >
       {/* Background Image */}
-      <div 
+      <div
         className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
-        style={{ backgroundImage: `url(${imageUrl})` }} 
+        style={{ backgroundImage: bgImage }}
       />
-      {/* Gradient Overlay */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/20 transition-opacity duration-300 group-hover:opacity-90" />
+      {/* Gradient Overlay (match WeChat cards: stronger top fade) */}
+      <div
+        className={`absolute inset-0 bg-gradient-to-t transition-opacity duration-300 group-hover:opacity-90 ${
+          wechat ? "from-black/95 via-black/40 to-black/10" : "from-black/95 via-black/40 to-black/20"
+        }`}
+      />
       
       {/* Content Container */}
       <div className={`relative flex flex-1 flex-col justify-between ${config.padding} h-full z-10`}>
@@ -133,9 +174,15 @@ export default function ArticleCard({
         <div className="flex justify-between items-start w-full">
            {/* Category Badge */}
            <div>
-             {(article.category || article.topic) && (
-               <span className={`inline-block rounded-lg bg-black/50 backdrop-blur-md px-2.5 py-0.5 ${config.badgeSize} font-bold uppercase tracking-wider text-white border border-white/20 shadow-sm`}>
-                 {article.category || article.topic}
+             {(wechat || article.category || article.topic) && (
+               <span
+                 className={`inline-block rounded-lg backdrop-blur-md px-2.5 py-0.5 ${config.badgeSize} font-bold uppercase tracking-wider text-white shadow-sm border ${
+                   wechat
+                     ? "bg-green-700/80 border-green-500/30"
+                     : "bg-black/50 border-white/20"
+                 }`}
+               >
+                 {wechat ? "WeChat" : article.category || article.topic}
                </span>
              )}
            </div>
@@ -197,12 +244,12 @@ export default function ArticleCard({
             <div className={`flex items-center gap-2 ${config.descriptionSize} text-slate-300 drop-shadow-sm`}>
               <div className="flex items-center gap-1.5 border-r border-white/20 pr-2">
                 <div className="h-4 w-4 sm:h-5 sm:w-5 rounded-[4px] overflow-hidden bg-white/90">
-                   <img src={getLogoPath(article.source_name)} alt={article.source_name} className="h-full w-full object-cover" onError={(e) => {
+                   <img src={footerLogoSrc(article)} alt={article.source_name || ""} className="h-full w-full object-cover" onError={(e) => {
                      (e.target as HTMLImageElement).style.display = 'none';
                      const parent = (e.target as HTMLElement).parentElement;
                      if (parent) {
                        parent.classList.add('flex', 'items-center', 'justify-center', 'bg-slate-800', 'text-[8px]', 'font-bold', 'text-white');
-                       parent.textContent = article.source_name.substring(0, 1).toUpperCase();
+                       parent.textContent = (article.source_name || "W").substring(0, 1).toUpperCase();
                      }
                    }} />
                 </div>

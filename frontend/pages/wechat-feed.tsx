@@ -1,8 +1,10 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
+import { api } from '../services/api';
+import { wechatCdnImageProxyUrl } from '../utils/wechatImageProxy';
 
 interface Article {
   id: string;
@@ -10,9 +12,9 @@ interface Article {
   title: string;
   picUrl: string;
   publishTime: string | number;
+  liked?: boolean;
+  bookmarked?: boolean;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8007';
 
 const getGebToken = (): string | null => {
   try {
@@ -29,20 +31,74 @@ export default function WeChatFeedPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const mpId = searchParams.get('account');
+  const queryClient = useQueryClient();
 
   const gebToken = typeof window !== 'undefined' ? getGebToken() : null;
 
   const { data: articles = [], isLoading, error } = useQuery<Article[]>({
     queryKey: ['wechatArticles', mpId],
     queryFn: async () => {
-      const res = await axios.get(`${API_BASE}/api/wechat/articles`, {
+      const res = await api.get<Article[]>('/api/wechat/articles', {
         params: { mpId },
-        headers: { Authorization: `Bearer ${gebToken}` },
       });
       return res.data;
     },
     enabled: !!mpId && !!gebToken,
   });
+
+  const wechatArticlesKey = ['wechatArticles', mpId] as const;
+
+  const toggleLike = async (e: React.MouseEvent, article: Article) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const wasLiked = !!article.liked;
+    const previous = queryClient.getQueryData<Article[]>(wechatArticlesKey);
+    queryClient.setQueryData<Article[]>(wechatArticlesKey, (old) =>
+      (old ?? []).map((a) =>
+        a.id === article.id ? { ...a, liked: !wasLiked } : a
+      )
+    );
+    try {
+      if (wasLiked) {
+        await api.delete('/api/articles/like', {
+          data: { article_id: article.id },
+        });
+      } else {
+        await api.post('/api/articles/like', { article_id: article.id });
+      }
+    } catch (err) {
+      console.error('Like failed:', err);
+      if (previous !== undefined) {
+        queryClient.setQueryData(wechatArticlesKey, previous);
+      }
+    }
+  };
+
+  const toggleBookmark = async (e: React.MouseEvent, article: Article) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const wasBm = !!article.bookmarked;
+    const previous = queryClient.getQueryData<Article[]>(wechatArticlesKey);
+    queryClient.setQueryData<Article[]>(wechatArticlesKey, (old) =>
+      (old ?? []).map((a) =>
+        a.id === article.id ? { ...a, bookmarked: !wasBm } : a
+      )
+    );
+    try {
+      if (wasBm) {
+        await api.delete('/api/articles/bookmark', {
+          data: { article_id: article.id },
+        });
+      } else {
+        await api.post('/api/articles/bookmark', { article_id: article.id });
+      }
+    } catch (err) {
+      console.error('Bookmark failed:', err);
+      if (previous !== undefined) {
+        queryClient.setQueryData(wechatArticlesKey, previous);
+      }
+    }
+  };
 
   if (!gebToken) {
     return (
@@ -73,8 +129,8 @@ export default function WeChatFeedPage() {
   if (isLoading) {
     return (
       <div className="max-w-4xl mx-auto py-8 px-4 text-center">
-        <div className="animate-spin h-8 w-8 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-4" />
-        <p className="text-slate-600">Loading articles…</p>
+        <div className="animate-spin h-8 w-8 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto" />
+        <p className="text-slate-600 text-sm mt-3">Loading...</p>
       </div>
     );
   }
@@ -99,7 +155,6 @@ export default function WeChatFeedPage() {
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Official Account Articles</h1>
@@ -112,44 +167,96 @@ export default function WeChatFeedPage() {
         </button>
       </div>
 
-      {/* Articles List */}
-      <div className="space-y-4">
-        {articles.length === 0 ? (
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-8 text-center">
-            <p className="text-slate-600">No articles cached yet. Try syncing from the sidebar.</p>
-          </div>
-        ) : (
-          articles.map((article) => (
-            <article
-              key={article.id}
-              className="border border-slate-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow bg-white"
-            >
-              <a
-                href={`https://mp.weixin.qq.com/s/${article.id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block p-5 hover:bg-slate-50 transition-colors"
+      {articles.length === 0 ? (
+        <div className="rounded-lg bg-slate-50 border border-slate-200 p-8 text-center">
+          <p className="text-slate-600">No articles cached yet. Try syncing from the sidebar.</p>
+        </div>
+      ) : (
+        <ul className="divide-y divide-slate-200 border border-slate-200 rounded-lg bg-white overflow-hidden">
+          {articles.map((article) => (
+            <li key={article.id} className="flex items-stretch">
+              <Link
+                href={`/article/${article.id}`}
+                className="flex flex-1 items-center gap-4 px-4 py-3 hover:bg-slate-50 transition-colors min-w-0"
               >
-                <div className="flex gap-4">
-                  {article.picUrl && (
-                    <img
-                      src={article.picUrl}
-                      alt={article.title}
-                      className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
-                    />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h2 className="text-base font-semibold text-slate-900 line-clamp-2 hover:text-blue-600">
-                      {article.title}
-                    </h2>
-                    <p className="text-xs text-slate-400 mt-2">{formatDate(article.publishTime)}</p>
-                  </div>
+                {article.picUrl ? (
+                  <img
+                    src={wechatCdnImageProxyUrl(article.picUrl)}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
+                    className="w-16 h-16 object-cover rounded-md flex-shrink-0 bg-slate-100"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-md flex-shrink-0 bg-slate-100" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-sm font-medium text-slate-900 line-clamp-2 hover:text-blue-600">
+                    {article.title}
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1 tabular-nums">
+                    {formatDate(article.publishTime)}
+                  </p>
                 </div>
-              </a>
-            </article>
-          ))
-        )}
-      </div>
+              </Link>
+              <div className="flex items-center gap-1 pr-3 pl-1 border-l border-slate-100 bg-slate-50/80">
+                <button
+                  type="button"
+                  onClick={(e) => toggleLike(e, article)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
+                    article.liked
+                      ? 'bg-red-500 border-red-500 text-white'
+                      : 'bg-white border-slate-200 text-slate-500 hover:border-red-200 hover:text-red-500'
+                  }`}
+                  title={article.liked ? 'Unlike' : 'Like'}
+                  aria-pressed={article.liked}
+                >
+                  <svg
+                    className={`h-4 w-4 ${article.liked ? 'scale-110' : ''}`}
+                    fill={article.liked ? 'currentColor' : 'none'}
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => toggleBookmark(e, article)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
+                    article.bookmarked
+                      ? 'bg-amber-500 border-amber-500 text-white'
+                      : 'bg-white border-slate-200 text-slate-500 hover:border-amber-200 hover:text-amber-600'
+                  }`}
+                  title={article.bookmarked ? 'Remove bookmark' : 'Bookmark'}
+                  aria-pressed={article.bookmarked}
+                >
+                  <svg
+                    className={`h-4 w-4 ${article.bookmarked ? 'scale-110' : ''}`}
+                    fill={article.bookmarked ? 'currentColor' : 'none'}
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

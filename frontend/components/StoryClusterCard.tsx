@@ -102,29 +102,27 @@ export default function StoryClusterCard({ story, onBookmark, onLike, size = "re
 
   const handleLike = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (story.articles.length > 0) {
-      try {
-        await onLike(story.articles[0].id);
-        // Fetch updated state from backend
-        const response = await api.get(`/api/feed/article/${story.articles[0].id}`);
-        setIsLiked(response.data.liked || false);
-      } catch (error) {
-        console.error("Failed to like article:", error);
-      }
+    if (story.articles.length === 0) return;
+    const prevLiked = isLiked;
+    setIsLiked(!prevLiked);
+    try {
+      await onLike(story.articles[0].id);
+    } catch (error) {
+      console.error("Failed to like article:", error);
+      setIsLiked(prevLiked);
     }
   };
 
   const handleBookmark = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (story.articles.length > 0) {
-      try {
-        await onBookmark(story.articles[0].id);
-        // Fetch updated state from backend
-        const response = await api.get(`/api/feed/article/${story.articles[0].id}`);
-        setIsBookmarked(response.data.bookmarked || false);
-      } catch (error) {
-        console.error("Failed to bookmark article:", error);
-      }
+    if (story.articles.length === 0) return;
+    const prevBm = isBookmarked;
+    setIsBookmarked(!prevBm);
+    try {
+      await onBookmark(story.articles[0].id);
+    } catch (error) {
+      console.error("Failed to bookmark article:", error);
+      setIsBookmarked(prevBm);
     }
   };
 

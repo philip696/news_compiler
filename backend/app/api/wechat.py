@@ -2,8 +2,8 @@
 WeChat / WeRead API — 1:1 port of test/python/main.py routes, adapted to GEB.
 
 All routes are user-scoped via the standard GEB JWT bearer auth
-(`get_current_user`). Data is persisted to the SQLAlchemy database
-(Supabase PostgreSQL when DATABASE_URL is a postgres URL, else SQLite).
+(`get_current_user`). Data is persisted via AppRepository: Supabase REST when
+SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set, else SQLAlchemy (DATABASE_URL / SQLite).
 
 Routes (prefix /api/wechat):
   GET    /qr                        -> start WeChat QR login (no auth)
@@ -23,23 +23,18 @@ Routes (prefix /api/wechat):
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import re
 import time
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
 from ..core.deps import get_current_user
-from ..db.database import SessionLocal, get_db
-from ..db.models import WeReadAccount, WeReadArticle, WeReadFeed
+from ..db.app_repository import AppRepository, ArticleRow, FeedRow, get_repo
 from ..services.weread_service import (
-    ENABLE,
     WeReadPoolEmptyError,
     WeReadRequestError,
     WeReadService,
@@ -49,6 +44,70 @@ from ..services.weread_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wechat", tags=["wechat"])
+
+
+# --- image proxy ---------------------------------------------------------- #
+# WeChat's image CDN (mmbiz.qpic.cn, wx.qlogo.cn) checks the Referer header
+# and serves a hotlink-protection placeholder ("未经允许不可引用") to any origin
+# that isn't mp.weixin.qq.com. We proxy through the backend with the correct
+# Referer so browsers can display thumbnails in our feed UI.
+_IMG_ALLOWED_HOSTS = {
+    "mmbiz.qpic.cn",
+    "mmbiz.qlogo.cn",
+    "wx.qlogo.cn",
+    "wx1.sinaimg.cn",
+    "thirdwx.qlogo.cn",
+    "mp.weixin.qq.com",
+}
+
+
+@router.get("/img")
+async def proxy_wechat_image(url: str = Query(..., min_length=8, max_length=2048)):
+    """Unauthenticated image proxy for WeChat CDN images.
+
+    Browsers can't set a custom Referer from `<img src>`, and mmbiz.qpic.cn
+    serves a placeholder image ("Image sourced from WeChat Official Accounts
+    Platform / Unauthorized use is prohibited") unless the Referer is a
+    WeChat domain. We fetch server-side with the right header, then stream
+    the bytes back with an aggressive cache so repeat views are free.
+    """
+    from urllib.parse import urlparse
+
+    if not url.startswith(("http://", "https://")):
+        return Response(status_code=400, content=b"bad url")
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    # Allow exact match or any subdomain of the whitelisted roots.
+    if not any(host == h or host.endswith("." + h) for h in _IMG_ALLOWED_HOSTS):
+        return Response(status_code=400, content=b"host not allowed")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 "
+            "MicroMessenger/8.0.45(0x18002d2f) NetType/WIFI Language/zh_CN"
+        ),
+        "Referer": "https://mp.weixin.qq.com/",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0), follow_redirects=True
+        ) as client:
+            upstream = await client.get(url, headers=headers)
+    except httpx.RequestError as err:
+        logger.info("wechat/img upstream error: %s", err)
+        return Response(status_code=502, content=b"upstream error")
+
+    if upstream.status_code != 200:
+        return Response(status_code=upstream.status_code, content=b"")
+
+    content_type = upstream.headers.get("content-type", "image/jpeg")
+    return Response(
+        content=upstream.content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
 
 
 # --- in-memory login session tracking (process-scoped) -------------------- #
@@ -126,16 +185,6 @@ def _http(request: Request) -> httpx.AsyncClient:
     return client
 
 
-def _placeholder_to_real_biz(mp_id: str) -> Optional[str]:
-    m = re.match(r"^MP_WXS_(\d+)$", str(mp_id or ""))
-    if not m:
-        return None
-    digits = m.group(1)
-    b64 = base64.b64encode(digits.encode("utf-8")).decode("ascii")
-    round_trip = base64.b64decode(b64.encode("ascii")).decode("utf-8")
-    return b64 if round_trip == digits else None
-
-
 async def _resolve_biz_from_share_url(
     wxs_link: str, client: httpx.AsyncClient
 ) -> dict:
@@ -187,70 +236,7 @@ async def _resolve_biz_from_share_url(
         return {"error": f"fetch_failed: {e}"}
 
 
-def _upsert_account_row(
-    db: Session, *, user_id: int, vid: str, token: str, name: str
-) -> WeReadAccount:
-    acc = (
-        db.query(WeReadAccount)
-        .filter(WeReadAccount.user_id == user_id, WeReadAccount.vid == vid)
-        .first()
-    )
-    if acc:
-        acc.token = token
-        acc.name = name
-        acc.status = ENABLE
-    else:
-        acc = WeReadAccount(
-            user_id=user_id, vid=vid, token=token, name=name, status=ENABLE
-        )
-        db.add(acc)
-    db.commit()
-    db.refresh(acc)
-    return acc
-
-
-def _upsert_feed_record(
-    db: Session, user_id: int, mp: dict
-) -> WeReadFeed:
-    mid = str(mp["id"])
-    feed = (
-        db.query(WeReadFeed)
-        .filter(WeReadFeed.user_id == user_id, WeReadFeed.mp_id == mid)
-        .first()
-    )
-    now = int(time.time())
-    if not feed:
-        feed = WeReadFeed(
-            user_id=user_id,
-            mp_id=mid,
-            mp_name=mp.get("name") or "",
-            mp_cover=mp.get("cover") or "",
-            mp_intro=mp.get("intro") or "",
-            update_time=mp.get("updateTime") or now,
-            sync_time=0,
-            has_history=1,
-            status=ENABLE,
-        )
-        db.add(feed)
-    else:
-        if mp.get("name"):
-            feed.mp_name = mp["name"]
-        if mp.get("cover"):
-            feed.mp_cover = mp["cover"]
-        if mp.get("intro"):
-            feed.mp_intro = mp["intro"]
-        if mp.get("updateTime"):
-            feed.update_time = mp["updateTime"]
-    db.commit()
-    db.refresh(feed)
-    return feed
-
-
-def _article_count(db: Session, feed_id: int) -> int:
-    return db.query(WeReadArticle).filter(WeReadArticle.feed_id == feed_id).count()
-
-
-def _serialize_feed(db: Session, feed: WeReadFeed) -> dict:
+def _serialize_feed(repo: AppRepository, feed: FeedRow) -> dict:
     return {
         "id": feed.mp_id,
         "mpName": feed.mp_name or "",
@@ -261,17 +247,24 @@ def _serialize_feed(db: Session, feed: WeReadFeed) -> dict:
         "hasHistory": feed.has_history,
         "status": feed.status,
         "createdAt": int(feed.created_at.timestamp()) if feed.created_at else 0,
-        "articleCount": _article_count(db, feed.id),
+        "articleCount": repo.weread_article_count_for_feed(feed.id),
     }
 
 
-def _serialize_article(a: WeReadArticle) -> dict:
+def _serialize_article(
+    a: ArticleRow,
+    *,
+    liked: bool = False,
+    bookmarked: bool = False,
+) -> dict:
     return {
         "id": a.article_id,
         "mpId": a.mp_id,
         "title": a.title,
         "picUrl": a.pic_url,
         "publishTime": a.publish_time,
+        "liked": liked,
+        "bookmarked": bookmarked,
     }
 
 
@@ -335,7 +328,7 @@ async def wechat_login_status(
     current_user: Optional[dict] = Depends(
         lambda: None  # auth is *optional* here
     ),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
     request: Request = None,
 ):
     """Poll WeChat QR login. If a GEB user is authenticated (Bearer token)
@@ -375,8 +368,7 @@ async def wechat_login_status(
                 uid_raw = token_payload.get("user_id") or token_payload.get("sub")
                 if uid_raw:
                     user_id = int(uid_raw)
-                    _upsert_account_row(
-                        db,
+                    repo.weread_account_upsert(
                         user_id=user_id,
                         vid=session["vid"],
                         token=session["token"],
@@ -398,26 +390,19 @@ async def wechat_login_status(
 async def list_accounts(
     request: Request,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     svc = _svc(request)
     blocked = set(svc.get_blocked_account_ids())
-    rows = (
-        db.query(WeReadAccount)
-        .filter(
-            WeReadAccount.user_id == int(current_user["sub"]),
-            WeReadAccount.status != 0,  # hide auto-disconnected/invalid sessions
-        )
-        .all()
-    )
+    rows = repo.weread_accounts_list_for_ui(int(current_user["sub"]))
     return [
         {
-            "id": a.vid,
-            "name": a.name,
-            "status": a.status,
-            "blockedToday": a.vid in blocked,
+            "id": r["vid"],
+            "name": r.get("name"),
+            "status": r["status"],
+            "blockedToday": r["vid"] in blocked,
         }
-        for a in rows
+        for r in rows
     ]
 
 
@@ -435,18 +420,11 @@ async def clear_block(
 async def delete_account(
     vid: str,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     user_id = int(current_user["sub"])
-    acc = (
-        db.query(WeReadAccount)
-        .filter(WeReadAccount.user_id == user_id, WeReadAccount.vid == vid)
-        .first()
-    )
-    if not acc:
+    if not repo.weread_account_delete(user_id, vid):
         return JSONResponse(status_code=404, content={"error": "account not found"})
-    db.delete(acc)
-    db.commit()
     return {"ok": True}
 
 
@@ -460,12 +438,18 @@ async def add_mp(
     body: MpAddBody,
     request: Request,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     svc = _svc(request)
     user_id = int(current_user["sub"])
     raw_link = body.wxsLink or body.url or ""
     wxs_link = _clean_wxs_link(raw_link)
+    logger.info(
+        "POST /mps received wxsLink len=%d repr=%r normalized=%r",
+        len(raw_link or ""),
+        (raw_link or "")[:300],
+        wxs_link[:300],
+    )
     if not re.match(r"^https://mp\.weixin\.qq\.com/s/", wxs_link):
         return JSONResponse(
             status_code=400,
@@ -473,80 +457,47 @@ async def add_mp(
                 "error": "wxsLink must start with https://mp.weixin.qq.com/s/",
                 "received": raw_link[:200],
                 "normalized": wxs_link[:200],
+                "received_repr": repr(raw_link)[:300],
             },
         )
+    # ----------------------------------------------------------------------
+    # 1:1 port of wewe-rss's add-feed flow:
+    #   apps/server/src/trpc/trpc.service.ts   getMpInfo()
+    #   apps/web/src/pages/feeds/index.tsx     handleConfirm()
+    #
+    #   res = await getMpInfo({ wxsLink: link })
+    #   if res[0]:
+    #     await addFeed({ id: item.id, mpName, mpCover, mpIntro, updateTime })
+    #     await refreshMpArticles({ mpId: item.id })   // sync page 1
+    #   else:
+    #     toast.error('添加失败', { description: '请检查链接是否正确' })
+    #
+    # Whatever id the gateway returns is stored verbatim — including the
+    # "MP_WXS_<digits>" placeholder form. wewe-rss does not do any placeholder
+    # detection, HTML scraping fallback, or __biz derivation.
+    # ----------------------------------------------------------------------
     try:
-        resolved = await svc.get_mp_info(db, user_id, wxs_link)
+        resolved = await svc.get_mp_info(repo, user_id, wxs_link)
         mps = resolved if isinstance(resolved, list) else [resolved]
         mps = [x for x in mps if x]
         if not mps:
             return JSONResponse(
-                status_code=502, content={"error": "gateway returned no mp info"}
+                status_code=400,
+                content={"error": "添加失败", "message": "请检查链接是否正确"},
             )
 
-        saved_feeds: list[WeReadFeed] = []
-        warnings: list[dict] = []
-        client = _http(request)
-
+        saved_feeds: list[FeedRow] = []
         for mp in mps:
-            final_mp = dict(mp)
-            mpid = str(mp.get("id", ""))
-            if re.match(r"^MP_WXS_\d+$", mpid):
-                real_biz = _placeholder_to_real_biz(mpid)
-                if real_biz:
-                    final_mp = {
-                        "id": real_biz,
-                        "name": mp.get("name") or "",
-                        "cover": mp.get("cover") or "",
-                        "intro": mp.get("intro") or "",
-                        "updateTime": mp.get("updateTime"),
-                    }
-                else:
-                    extracted = await _resolve_biz_from_share_url(wxs_link, client)
-                    if extracted.get("id"):
-                        final_mp = {
-                            "id": extracted["id"],
-                            "name": extracted.get("title") or mp.get("name") or "",
-                            "cover": extracted.get("cover") or mp.get("cover") or "",
-                            "intro": extracted.get("intro") or mp.get("intro") or "",
-                            "updateTime": mp.get("updateTime"),
-                        }
-                    else:
-                        warnings.append(
-                            {
-                                "mpId": mpid,
-                                "message": (
-                                    "Gateway returned a placeholder id and the article page couldn't "
-                                    f"be parsed ({extracted.get('error', 'unknown')}). Use the "
-                                    "'Add by known official-account ID' endpoint to enter the biz id."
-                                ),
-                            }
-                        )
-            feed = _upsert_feed_record(db, user_id, final_mp)
+            feed = repo.weread_feed_upsert(user_id, mp)
             saved_feeds.append(feed)
+            try:
+                await svc.refresh_mp_articles_and_update_feed(
+                    repo, user_id, feed.mp_id
+                )
+            except Exception as err:
+                logger.error("refresh on add mp=%s failed: %s", feed.mp_id, err)
 
-        # schedule background history fetch only if we resolved clean MPs
-        if not warnings:
-
-            async def history_bg(feed_ids: list[int], mp_ids: list[str]):
-                bg_db = SessionLocal()
-                try:
-                    for mp_id in mp_ids:
-                        try:
-                            await svc.get_history_mp_articles(bg_db, user_id, mp_id)
-                        except Exception as err:
-                            logger.error("history fetch mp=%s failed: %s", mp_id, err)
-                finally:
-                    bg_db.close()
-
-            asyncio.create_task(
-                history_bg([f.id for f in saved_feeds], [f.mp_id for f in saved_feeds])
-            )
-
-        return {
-            "feeds": [_serialize_feed(db, f) for f in saved_feeds],
-            "warnings": warnings,
-        }
+        return {"feeds": [_serialize_feed(repo, f) for f in saved_feeds]}
     except WeReadPoolEmptyError as err:
         return JSONResponse(
             status_code=502,
@@ -569,11 +520,11 @@ async def add_mp(
 @router.get("/mps")
 async def list_mps(
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     user_id = int(current_user["sub"])
-    feeds = db.query(WeReadFeed).filter(WeReadFeed.user_id == user_id).all()
-    return [_serialize_feed(db, f) for f in feeds]
+    feeds = repo.weread_feed_list_user(user_id)
+    return [_serialize_feed(repo, f) for f in feeds]
 
 
 @router.post("/mps/{mp_id}/sync")
@@ -582,37 +533,21 @@ async def sync_mp(
     request: Request,
     history: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     svc = _svc(request)
     user_id = int(current_user["sub"])
-    feed = (
-        db.query(WeReadFeed)
-        .filter(WeReadFeed.user_id == user_id, WeReadFeed.mp_id == mp_id)
-        .first()
-    )
+    feed = repo.weread_feed_get(user_id, mp_id)
     if not feed:
         return JSONResponse(status_code=404, content={"error": "mp not found"})
 
-    # placeholder migration
-    if re.match(r"^MP_WXS_\d+$", mp_id):
-        real_biz = _placeholder_to_real_biz(mp_id)
-        if real_biz:
-            logger.info("[wechat] migrating placeholder %s -> %s", mp_id, real_biz)
-            db.query(WeReadArticle).filter(WeReadArticle.mp_id == mp_id).update(
-                {"mp_id": real_biz}
-            )
-            feed.mp_id = real_biz
-            db.commit()
-            mp_id = real_biz
-
     try:
         if history in ("1", "true"):
-            await svc.get_history_mp_articles(db, user_id, mp_id)
+            await svc.get_history_mp_articles(repo, user_id, mp_id)
         else:
-            await svc.refresh_mp_articles_and_update_feed(db, user_id, mp_id)
-        db.refresh(feed)
-        return _serialize_feed(db, feed)
+            await svc.refresh_mp_articles_and_update_feed(repo, user_id, mp_id)
+        feed = repo.weread_feed_get(user_id, mp_id) or feed
+        return _serialize_feed(repo, feed)
     except WeReadPoolEmptyError as err:
         return JSONResponse(
             status_code=502,
@@ -629,37 +564,6 @@ async def sync_mp(
         )
     except WeReadRequestError as err:
         msg = err.upstream_message or str(err)
-        if re.search(r"WeReadError400", msg) and re.match(r"^MP_WXS_\d+$", mp_id):
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "placeholder_mpid",
-                    "message": (
-                        f'mpId "{mp_id}" is a gateway placeholder and cannot be fetched. '
-                        "Delete it and add a different article URL from the same official account."
-                    ),
-                },
-            )
-        if re.search(r"WeReadError400", msg):
-            blocked = svc.get_blocked_account_ids()
-            total = (
-                db.query(WeReadAccount)
-                .filter(WeReadAccount.user_id == user_id)
-                .count()
-            )
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": "pool_exhausted",
-                    "message": (
-                        "Upstream gateway rejected every account in your pool with "
-                        "WeReadError400. Log in with one or more additional WeChat "
-                        "accounts and try again."
-                    ),
-                    "upstream": msg,
-                    "pool": {"total": total, "blockedToday": len(blocked)},
-                },
-            )
         logger.error("sync mp=%s failed: %s", mp_id, msg)
         return JSONResponse(status_code=502, content={"error": msg})
     except Exception as err:
@@ -692,7 +596,7 @@ async def resolve_share(
 async def mps_by_id(
     body: MpByIdBody,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     user_id = int(current_user["sub"])
     mid = str(body.mpId or body.id or "").strip()
@@ -706,24 +610,24 @@ async def mps_by_id(
                 "message": "That id looks like a gateway placeholder.",
             },
         )
-    feed = _upsert_feed_record(
-        db, user_id, {"id": mid, "name": body.name or "", "cover": "", "intro": ""}
+    feed = repo.weread_feed_upsert(
+        user_id, {"id": mid, "name": body.name or "", "cover": "", "intro": ""}
     )
-    return _serialize_feed(db, feed)
+    return _serialize_feed(repo, feed)
 
 
 @router.post("/mps/sync-all")
 async def sync_all(
     request: Request,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     svc = _svc(request)
     user_id = int(current_user["sub"])
     try:
-        await svc.refresh_all_mp_articles_and_update_feed(db, user_id)
-        feeds = db.query(WeReadFeed).filter(WeReadFeed.user_id == user_id).all()
-        return {"feeds": [_serialize_feed(db, f) for f in feeds]}
+        await svc.refresh_all_mp_articles_and_update_feed(repo, user_id)
+        feeds = repo.weread_feed_list_user(user_id)
+        return {"feeds": [_serialize_feed(repo, f) for f in feeds]}
     except Exception as err:
         logger.error("sync-all failed: %s", err)
         return JSONResponse(status_code=502, content={"error": str(err)})
@@ -733,17 +637,10 @@ async def sync_all(
 async def delete_mp(
     mp_id: str,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     user_id = int(current_user["sub"])
-    feed = (
-        db.query(WeReadFeed)
-        .filter(WeReadFeed.user_id == user_id, WeReadFeed.mp_id == mp_id)
-        .first()
-    )
-    if feed:
-        db.delete(feed)  # cascades articles via relationship
-        db.commit()
+    repo.weread_feed_delete_cascade(user_id, mp_id)
     return {"ok": True}
 
 
@@ -756,18 +653,20 @@ async def delete_mp(
 async def articles(
     mpId: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     user_id = int(current_user["sub"])
-    q = (
-        db.query(WeReadArticle)
-        .join(WeReadFeed, WeReadArticle.feed_id == WeReadFeed.id)
-        .filter(WeReadFeed.user_id == user_id)
-    )
-    if mpId:
-        q = q.filter(WeReadArticle.mp_id == mpId)
-    q = q.order_by(WeReadArticle.publish_time.desc())
-    return [_serialize_article(a) for a in q.all()]
+    liked_ids = set(repo.like_list_article_ids(user_id))
+    bookmarked_ids = set(repo.bookmark_list_article_ids(user_id))
+    rows = repo.weread_articles_list_user(user_id, mpId)
+    return [
+        _serialize_article(
+            a,
+            liked=a.article_id in liked_ids,
+            bookmarked=a.article_id in bookmarked_ids,
+        )
+        for a in rows
+    ]
 
 
 @router.get("/wechat-articles")
@@ -776,7 +675,7 @@ async def wechat_articles(
     request: Request,
     history: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
     svc = _svc(request)
     user_id = int(current_user["sub"])
@@ -784,17 +683,20 @@ async def wechat_articles(
         return JSONResponse(status_code=400, content={"error": "mpId required"})
     try:
         if history in ("1", "true"):
-            await svc.get_history_mp_articles(db, user_id, mpId)
+            await svc.get_history_mp_articles(repo, user_id, mpId)
         else:
-            await svc.refresh_mp_articles_and_update_feed(db, user_id, mpId)
-        rows = (
-            db.query(WeReadArticle)
-            .join(WeReadFeed, WeReadArticle.feed_id == WeReadFeed.id)
-            .filter(WeReadFeed.user_id == user_id, WeReadArticle.mp_id == mpId)
-            .order_by(WeReadArticle.publish_time.desc())
-            .all()
-        )
-        return [_serialize_article(a) for a in rows]
+            await svc.refresh_mp_articles_and_update_feed(repo, user_id, mpId)
+        liked_ids = set(repo.like_list_article_ids(user_id))
+        bookmarked_ids = set(repo.bookmark_list_article_ids(user_id))
+        rows = repo.weread_articles_list_user(user_id, mpId)
+        return [
+            _serialize_article(
+                a,
+                liked=a.article_id in liked_ids,
+                bookmarked=a.article_id in bookmarked_ids,
+            )
+            for a in rows
+        ]
     except WeReadPoolEmptyError as err:
         return JSONResponse(
             status_code=502,

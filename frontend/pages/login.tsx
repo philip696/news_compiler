@@ -129,13 +129,13 @@ export default function Login() {
                 <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">
                   Username
                 </p>
-                <p className="text-slate-900 font-mono text-sm">demo123@test.com</p>
+                <p className="text-slate-900 font-mono text-sm">demo@example.com</p>
               </div>
               <div>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">
                   Password
                 </p>
-                <p className="text-slate-900 font-mono text-sm">demo123</p>
+                <p className="text-slate-900 font-mono text-sm">demo1234</p>
               </div>
             </div>
           </div>

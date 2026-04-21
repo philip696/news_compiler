@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 
 from .. import state
+from ..core.config import settings
 
 # WebHose category to GEB topic mapping
 WEBHOSE_CATEGORY_TO_TOPIC = {
@@ -143,8 +144,7 @@ def ingest_webhose_jsonl() -> int:
         with open(jsonl_path, 'r', encoding='utf-8') as f:
             for line_num, line in enumerate(f):
                 if line.strip():
-                    # Load max 50 articles from webhose
-                    if inserted >= 50:
+                    if inserted >= settings.webhose_max_articles:
                         break
                     
                     article_data = json.loads(line)
@@ -256,7 +256,13 @@ def ingest_kaggle_dataset() -> int:
                         # Initialize category if not seen
                         if kaggle_category not in articles_by_category_temp:
                             articles_by_category_temp[kaggle_category] = []
-                        
+
+                        if (
+                            len(articles_by_category_temp[kaggle_category])
+                            >= settings.kaggle_max_collect_per_category
+                        ):
+                            continue
+
                         # Extract fields
                         title = article_data.get("headline", "").strip()
                         description = article_data.get("short_description", "").strip()
@@ -326,9 +332,15 @@ def ingest_kaggle_dataset() -> int:
                             sys.stdout.flush()
                         
                         # Early exit: stop scanning if we have enough total or hit a satisfactory threshold
-                        total_collected = sum(len(articles_by_category_temp.get(cat, [])) for cat in TOP_CATEGORIES)
-                        if total_collected >= 10000:
-                            print(f"  ✋ Early exit: collected {total_collected} total articles from {len(articles_by_category_temp)} categories", flush=True)
+                        total_collected = sum(
+                            len(articles_by_category_temp.get(cat, []))
+                            for cat in TOP_CATEGORIES
+                        )
+                        if total_collected >= settings.kaggle_scan_max_total:
+                            print(
+                                f"  ✋ Early exit: collected {total_collected} total articles (cap {settings.kaggle_scan_max_total})",
+                                flush=True,
+                            )
                             for cat in TOP_CATEGORIES:
                                 count = len(articles_by_category_temp.get(cat, []))
                                 print(f"    → {cat}: {count} articles", flush=True)
@@ -367,8 +379,7 @@ def ingest_kaggle_dataset() -> int:
             print(f"    📌 {category}: {available} available", flush=True)
             sys.stdout.flush()
             
-            # Take up to 2000 or available, whichever is smaller
-            num_to_select = min(2000, available)
+            num_to_select = min(settings.kaggle_max_per_category, available)
             print(f"    🎲 Selecting {num_to_select} from {available}...", flush=True)
             sys.stdout.flush()
             

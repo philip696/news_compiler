@@ -43,10 +43,10 @@ class WeWeRSSClient:
             
             async with httpx.AsyncClient(timeout=WEWE_RSS_TIMEOUT) as client:
                 resp = await client.get(url, params=params, headers=self.headers)
-                resp.raise_for_status()
+            resp.raise_for_status()
                 
                 if format == "json":
-                    return resp.json()
+                return resp.json()
                 else:
                     # For RSS/ATOM, parse as XML
                     return {"raw": resp.text}
@@ -170,10 +170,10 @@ def parse_wewe_rss_feed(feed_data: dict, source_id: str = "wechat_official") -> 
 
     if not items:
         raise ValueError("WeWe-RSS payload contains no items")
-    
+
     for item in items:
         try:
-            article = {
+        article = {
                 "id": item.get("id") or item.get("guid") or item.get("link", ""),
                 "title": sanitize_article_title(item.get("title", "Untitled")),
                 "summary": sanitize_article_summary(item.get("description") or item.get("summary", "")),
@@ -184,10 +184,10 @@ def parse_wewe_rss_feed(feed_data: dict, source_id: str = "wechat_official") -> 
                 "published_at": item.get("pubDate") or item.get("published") or datetime.now(timezone.utc).isoformat(),
                 "author": item.get("author", "WeChat Official Account"),
                 "category": "wechat",
-            }
-            articles.append(article)
+        }
+        articles.append(article)
         except Exception as e:
             logger.error(f"Error parsing WeWe-RSS item: {e}")
             raise ValueError("Failed to parse WeWe-RSS item") from e
-    
+
     return articles

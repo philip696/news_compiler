@@ -31,8 +31,9 @@ export default function CategoriesPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#f3f4f6] flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Loading...</h1>
+        <div className="flex flex-col items-center text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+          <p className="text-slate-600 text-sm mt-3">Loading...</p>
         </div>
       </div>
     );

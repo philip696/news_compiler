@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import os
@@ -9,6 +10,7 @@ import httpx
 from . import state
 from .core.config import settings
 from .db import Base, engine
+from .db.supabase_client import use_supabase_runtime
 from .api.auth import router as auth_router
 from .api.user import router as user_router
 from .api.topics import router as topics_router
@@ -22,20 +24,25 @@ from .api.chatbot import router as chatbot_router
 from .api.wechat import router as wechat_router
 from .services.weread_service import WeReadService, DEFAULT_PLATFORM_URL
 
-# Initialize database tables
-Base.metadata.create_all(bind=engine)
+# Create tables for SQLAlchemy/SQLite local runs only (Supabase: use SQL editor or Alembic).
+if not use_supabase_runtime():
+    Base.metadata.create_all(bind=engine)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage startup ingestion + WeRead HTTP client for the app's lifetime."""
-    # ── Data ingestion (runs in a thread so it doesn't block the event loop) ──
-    from .startup import run_startup_sequence
     import asyncio
-    try:
-        await asyncio.get_event_loop().run_in_executor(None, run_startup_sequence)
-    except Exception as e:
-        print(f"⚠️  Startup sequence error (app continues): {e}", flush=True)
+
+    from .startup import run_startup_sequence
+
+    async def _ingest_in_background():
+        """WebHose + Kaggle load can take minutes on small hosts; must not block listen."""
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, run_startup_sequence)
+        except Exception as e:
+            print(f"⚠️  Startup sequence error (app continues): {e}", flush=True)
 
     # ── WeRead HTTP client ─────────────────────────────────────────────────
     timeout = httpx.Timeout(15.0, connect=10.0)
@@ -45,6 +52,20 @@ async def lifespan(app: FastAPI):
             client=client,
             platform_url=os.getenv("PLATFORM_URL", DEFAULT_PLATFORM_URL),
         )
+        ingest_sync = os.getenv("STARTUP_INGEST_SYNC", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if ingest_sync:
+            await _ingest_in_background()
+        else:
+            asyncio.create_task(_ingest_in_background())
+            print(
+                "📥 Startup ingestion running in background (/healthz is ready). "
+                "Set STARTUP_INGEST_SYNC=1 to block until ingest finishes.",
+                flush=True,
+            )
         try:
             yield
         finally:
@@ -58,6 +79,8 @@ app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 allowed_origins = [
     "http://127.0.0.1:3000",
     "http://localhost:3000",
+    "http://127.0.0.1:3001",
+    "http://localhost:3001",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
     "http://127.0.0.1:8080",  # Alternative frontend ports
@@ -81,6 +104,8 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
     max_age=3600,
 )
+
+app.add_middleware(GZipMiddleware, minimum_size=800)
 
 # Mount static files for serving images and data
 data_path = Path(__file__).parent.parent / "data"

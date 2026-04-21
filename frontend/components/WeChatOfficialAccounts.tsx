@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import { wechatCdnImageProxyUrl } from '../utils/wechatImageProxy';
 import { QRCodeSVG } from 'qrcode.react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8007';
@@ -173,8 +174,13 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
       queryClient.invalidateQueries({ queryKey: ['wereadFeeds'] });
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.error || err.response?.data?.detail || 'Failed to add account';
-      setError(msg);
+      const data = err.response?.data || {};
+      const parts = [
+        data.error || data.detail || 'Failed to add account',
+        data.received_repr ? `server saw: ${data.received_repr}` : null,
+      ].filter(Boolean);
+      setError(parts.join(' — '));
+      console.error('[wechat add mp] response data:', data);
     },
   });
 
@@ -268,7 +274,8 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
         ) : qrState === 'loading_qr' ? (
           <div className="text-center py-4">
             <div className="animate-spin h-6 w-6 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto" />
-        </div>
+            <p className="text-slate-600 text-sm mt-3">Loading...</p>
+          </div>
         ) : qrState === 'polling' ? (
           <div className="text-center space-y-2">
             <p className="text-sm font-medium text-slate-700">Scan with WeChat</p>
@@ -277,8 +284,9 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
                 <QRCodeSVG value={scanUrl} size={160} />
         </div>
             ) : (
-              <div className="w-40 h-40 bg-slate-100 flex items-center justify-center rounded-lg mx-auto">
+              <div className="w-40 h-40 bg-slate-100 flex flex-col items-center justify-center rounded-lg mx-auto gap-2">
                 <div className="animate-spin h-6 w-6 border-4 border-blue-200 border-t-blue-600 rounded-full" />
+                <p className="text-slate-600 text-[10px]">Loading...</p>
               </div>
             )}
             <p className="text-xs text-slate-500">Open WeChat → [+] → Scan QR Code</p>
@@ -351,7 +359,11 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
             <div key={feed.id} className="border border-slate-100 rounded-lg p-3 hover:bg-slate-50 transition-colors">
               <div className="flex items-start gap-2">
                 {feed.mpCover && (
-                  <img src={feed.mpCover} alt={feed.mpName} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                  <img
+                    src={wechatCdnImageProxyUrl(feed.mpCover)}
+                    alt={feed.mpName}
+                    className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                  />
                 )}
                 <div className="flex-1 min-w-0">
                   <h4 className="font-semibold text-sm text-slate-900 truncate">{feed.mpName || feed.id}</h4>

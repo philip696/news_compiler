@@ -1,8 +1,8 @@
 """
 WeRead (WeChat Reading) article fetching service.
 
-Ported from test/python/weread_service.py and adapted to persist state in
-Supabase/PostgreSQL (or any SQLAlchemy target) instead of in-memory dicts.
+Persisted via AppRepository: SQLAlchemy (local/DATABASE_URL) or Supabase REST
+when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are set.
 
 Behaviour mirrors wewe-rss 1:1:
 - Account pooling with per-call rotation (WeReadError400)
@@ -18,7 +18,6 @@ import logging
 import math
 import os
 import random
-import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -26,16 +25,12 @@ from typing import Any, Optional
 from urllib.parse import urlencode
 
 import httpx
-from sqlalchemy.orm import Session
 
-from ..db.models import WeReadAccount, WeReadArticle, WeReadFeed
+from ..db.app_repository import AppRepository, FeedRow, PoolAccount
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PLATFORM_URL = os.environ.get("PLATFORM_URL", "https://weread.111965.xyz")
-# The upstream gateway fingerprints on User-Agent and serves 500 "unknown error"
-# for browser-looking UAs. wewe-rss uses axios with its default `axios/<ver>` UA
-# and works fine, so we mirror that exactly.
 DEFAULT_UA = "axios/1.7.7"
 DEFAULT_REQUEST_TIMEOUT_MS = 15 * 1000
 LOGIN_POLL_TIMEOUT_MS = 120 * 1000
@@ -92,18 +87,15 @@ def _today_key() -> str:
 
 @dataclass
 class _State:
-    in_progress_history_mp: dict[int, dict] = field(default_factory=dict)  # user_id -> {mp_id, page}
-    refresh_all_running: set[int] = field(default_factory=set)              # user_ids currently refreshing
+    in_progress_history_mp: dict[int, dict] = field(default_factory=dict)
+    refresh_all_running: set[int] = field(default_factory=set)
 
 
 # --- Service -------------------------------------------------------------- #
 
 
 class WeReadService:
-    """
-    Singleton WeRead service. All methods that touch user-scoped data accept a
-    SQLAlchemy Session and the user_id to operate on.
-    """
+    """WeRead gateway client; persistence through AppRepository."""
 
     def __init__(
         self,
@@ -123,11 +115,8 @@ class WeReadService:
             update_delay_ms if update_delay_ms is not None else _default_update_delay_ms()
         )
         self._max_retries = max_retries
-        # daily block list: { "YYYY-MM-DD": [vid, ...] }
         self._blocked_accounts_map: dict[str, list[str]] = {}
         self._state = _State()
-
-    # ---- block list -------------------------------------------------------
 
     def get_blocked_account_ids(self) -> list[str]:
         return [x for x in self._blocked_accounts_map.get(_today_key(), []) if x]
@@ -142,34 +131,26 @@ class WeReadService:
     def clear_blocked_accounts(self) -> None:
         self._blocked_accounts_map.clear()
 
-    # ---- account pool -----------------------------------------------------
+    def _list_enabled_accounts(
+        self, repo: AppRepository, user_id: int
+    ) -> list[PoolAccount]:
+        return repo.weread_pool_list_enabled(user_id)
 
-    def _list_enabled_accounts(self, db: Session, user_id: int) -> list[WeReadAccount]:
-        return (
-            db.query(WeReadAccount)
-            .filter(
-                WeReadAccount.user_id == user_id,
-                WeReadAccount.status == ENABLE,
-                WeReadAccount.token.isnot(None),
-            )
-            .all()
-        )
-
-    def _count_accounts(self, db: Session, user_id: int) -> int:
-        return db.query(WeReadAccount).filter(WeReadAccount.user_id == user_id).count()
+    def _count_accounts(self, repo: AppRepository, user_id: int) -> int:
+        return repo.weread_account_count(user_id)
 
     def _get_available_account(
         self,
-        db: Session,
+        repo: AppRepository,
         user_id: int,
         exclude_ids: Optional[list[str]] = None,
-    ) -> WeReadAccount:
+    ) -> PoolAccount:
         exclude_ids = set(exclude_ids or [])
         blocked = set(self.get_blocked_account_ids()) | exclude_ids
-        enabled = self._list_enabled_accounts(db, user_id)
+        enabled = self._list_enabled_accounts(repo, user_id)
         pool = [a for a in enabled if a.vid not in blocked]
         if not pool:
-            total = self._count_accounts(db, user_id)
+            total = self._count_accounts(repo, user_id)
             if total == 0:
                 raise WeReadSessionError("暂无可用读书账号 — log in with WeChat first.")
             bl = self.get_blocked_account_ids()
@@ -183,31 +164,12 @@ class WeReadService:
             )
         return random.choice(pool)
 
-    def _mark_account_invalid(self, db: Session, vid: str) -> None:
-        """Session rejected with WeReadError401 — soft-disconnect.
-
-        Mirrors wewe-rss exactly: flip status to INVALID (0) so the account is
-        skipped by the pool picker. The row is kept so:
-        - downstream FKs (feeds/articles) stay intact,
-        - a transient 401 does not destroy a working session permanently,
-        - the `/accounts` endpoint hides it (status != 0) so the UI shows it as
-          disconnected and the user can simply re-scan the QR to revive it.
-        """
-        acc = db.query(WeReadAccount).filter(WeReadAccount.vid == vid).first()
-        if not acc:
-            return
-        acc.status = INVALID
-        db.commit()
-        logger.warning("[weread] account(%s) session invalid, marked INVALID", vid)
-
-    # ---- http -------------------------------------------------------------
+    def _mark_account_invalid(self, repo: AppRepository, vid: str) -> None:
+        repo.weread_mark_invalid_by_vid(vid)
 
     def _build_headers(
-        self, account: Optional[WeReadAccount], extra: Optional[dict] = None
+        self, account: Optional[PoolAccount], extra: Optional[dict] = None
     ) -> dict:
-        # Mirror wewe-rss axios request exactly: only xid + Authorization for
-        # authenticated calls, plus the axios-style Accept header. The extra
-        # Content-Type header is injected by _raw_request on POSTs with a body.
         h = {
             "Accept": "application/json, text/plain, */*",
             "User-Agent": self._user_agent,
@@ -225,7 +187,7 @@ class WeReadService:
         method: str,
         pathname: str,
         *,
-        account: Optional[WeReadAccount] = None,
+        account: Optional[PoolAccount] = None,
         query: Optional[dict] = None,
         body: Optional[dict] = None,
         timeout_ms: Optional[int] = None,
@@ -268,26 +230,15 @@ class WeReadService:
         return payload
 
     async def _handle_upstream_error(
-        self, err: BaseException, account: WeReadAccount, db: Session
+        self, err: BaseException, account: PoolAccount, repo: AppRepository
     ) -> dict:
-        """Mirror wewe-rss axios response-interceptor side effects 1:1.
-
-        - WeReadError401  -> mark account INVALID in DB
-        - WeReadError429  -> add to today's block list
-        - WeReadError400  -> just sleep 10s; DO NOT remove the account from the
-                             pool. wewe-rss leaves it available so the next
-                             random pick can retry the same (transient) upstream.
-        Everything is retryable from the caller's perspective; we never reject a
-        specific account for a single bad response (that was breaking small
-        pools).
-        """
         msg = (
             err.upstream_message or str(err)
             if isinstance(err, WeReadRequestError)
             else str(err)
         )
         if "WeReadError401" in msg:
-            self._mark_account_invalid(db, account.vid)
+            self._mark_account_invalid(repo, account.vid)
             logger.error("[weread] account(%s) 401, disabled", account.vid)
             return {"kind": "session", "retry": True}
         if "WeReadError429" in msg:
@@ -297,14 +248,13 @@ class WeReadService:
         if "WeReadError400" in msg:
             logger.error(
                 "[weread] account(%s) WeReadError400 (sleep 10s): %s",
-                account.vid, msg,
+                account.vid,
+                msg,
             )
             await asyncio.sleep(10)
             return {"kind": "bad-request", "retry": True}
         logger.error("[weread] unhandled upstream error (%s): %s", account.vid, msg)
         return {"kind": "unknown", "retry": True}
-
-    # ---- public: login (no auth required) --------------------------------
 
     async def create_login_url(self) -> dict:
         return await self._raw_request("GET", "/api/v2/login/platform")
@@ -316,13 +266,11 @@ class WeReadService:
             timeout_ms=LOGIN_POLL_TIMEOUT_MS,
         )
 
-    # ---- public: mp info / articles --------------------------------------
-
-    async def get_mp_info(self, db: Session, user_id: int, wxs_link: str) -> Any:
+    async def get_mp_info(self, repo: AppRepository, user_id: int, wxs_link: str) -> Any:
         url = (wxs_link or "").strip()
         if not url.startswith("https://mp.weixin.qq.com/s/"):
             raise ValueError("getMpInfo: expected a https://mp.weixin.qq.com/s/... link")
-        account = self._get_available_account(db, user_id)
+        account = self._get_available_account(repo, user_id)
         try:
             return await self._raw_request(
                 "POST",
@@ -331,36 +279,22 @@ class WeReadService:
                 body={"url": url},
             )
         except WeReadRequestError as err:
-            # Run the same interceptor side-effects as wewe-rss (401 disables
-            # account, 429 blocks for today, 400 sleeps 10s). wewe-rss does not
-            # retry getMpInfo itself, so neither do we — surface the error.
-            await self._handle_upstream_error(err, account, db)
+            await self._handle_upstream_error(err, account, repo)
             raise
 
     async def get_mp_articles(
         self,
-        db: Session,
+        repo: AppRepository,
         user_id: int,
         mp_id: str,
         page: int = 1,
         *,
         retries_left: Optional[int] = None,
     ) -> list:
-        """Fetch one page of MP articles.
-
-        Mirrors wewe-rss.getMpArticles exactly:
-        - pick a RANDOM enabled account every attempt (no "tried" exclusion
-          list — the same account can be picked twice, which is fine because
-          WeReadError400 is usually transient),
-        - retry up to `max_retries` times on any failure,
-        - the response interceptor equivalent (`_handle_upstream_error`) does
-          the per-error housekeeping (mark invalid on 401, block on 429,
-          sleep 10s on 400).
-        """
         if not mp_id:
             raise ValueError("getMpArticles: mp_id is required")
         retries_left = self._max_retries if retries_left is None else retries_left
-        account = self._get_available_account(db, user_id)
+        account = self._get_available_account(repo, user_id)
         try:
             data = await self._raw_request(
                 "GET",
@@ -371,82 +305,49 @@ class WeReadService:
             lst = data if isinstance(data, list) else (data or {}).get("items") or []
             logger.info(
                 "[weread] getMpArticles(%s) page=%s via acc=%s -> %s",
-                mp_id, page, account.vid, len(lst),
+                mp_id,
+                page,
+                account.vid,
+                len(lst),
             )
             return lst
         except WeReadPoolEmptyError:
             raise
         except BaseException as err:
-            await self._handle_upstream_error(err, account, db)
+            await self._handle_upstream_error(err, account, repo)
             if retries_left > 0:
                 logger.error(
                     "[weread] retry(%s) getMpArticles(%s) page=%s: %s",
-                    self._max_retries - retries_left + 1, mp_id, page, err,
+                    self._max_retries - retries_left + 1,
+                    mp_id,
+                    page,
+                    err,
                 )
                 return await self.get_mp_articles(
-                    db, user_id, mp_id, page,
+                    repo,
+                    user_id,
+                    mp_id,
+                    page,
                     retries_left=retries_left - 1,
                 )
             raise
 
-    # ---- upserts ----------------------------------------------------------
-
-    def _upsert_article(
-        self,
-        db: Session,
-        *,
-        feed_id: int,
-        mp_id: str,
-        article_id: str,
-        title: str,
-        pic_url: str,
-        publish_time: int,
-    ) -> None:
-        existing = (
-            db.query(WeReadArticle)
-            .filter(WeReadArticle.feed_id == feed_id, WeReadArticle.article_id == article_id)
-            .first()
-        )
-        if existing:
-            existing.title = title
-            existing.pic_url = pic_url
-            existing.publish_time = publish_time
-            existing.mp_id = mp_id
-        else:
-            db.add(
-                WeReadArticle(
-                    feed_id=feed_id,
-                    mp_id=mp_id,
-                    article_id=article_id,
-                    title=title,
-                    pic_url=pic_url,
-                    publish_time=publish_time,
-                )
-            )
-
     def _get_or_create_feed(
-        self, db: Session, user_id: int, mp_id: str
-    ) -> WeReadFeed:
-        feed = (
-            db.query(WeReadFeed)
-            .filter(WeReadFeed.user_id == user_id, WeReadFeed.mp_id == mp_id)
-            .first()
+        self, repo: AppRepository, user_id: int, mp_id: str
+    ) -> FeedRow:
+        f = repo.weread_feed_get(user_id, mp_id)
+        if f:
+            return f
+        return repo.weread_feed_upsert(
+            user_id, {"id": mp_id, "name": "", "cover": "", "intro": ""}
         )
-        if not feed:
-            feed = WeReadFeed(user_id=user_id, mp_id=mp_id)
-            db.add(feed)
-            db.commit()
-            db.refresh(feed)
-        return feed
-
-    # ---- public: refresh / history ---------------------------------------
 
     async def refresh_mp_articles_and_update_feed(
-        self, db: Session, user_id: int, mp_id: str, page: int = 1
+        self, repo: AppRepository, user_id: int, mp_id: str, page: int = 1
     ) -> dict:
-        articles = await self.get_mp_articles(db, user_id, mp_id, page)
+        articles = await self.get_mp_articles(repo, user_id, mp_id, page)
 
-        feed = self._get_or_create_feed(db, user_id, mp_id)
+        feed = self._get_or_create_feed(repo, user_id, mp_id)
 
         for a in articles:
             if not a or not a.get("id"):
@@ -463,11 +364,14 @@ class WeReadService:
                     pub = int(datetime.fromisoformat(s).timestamp())
                 except (ValueError, TypeError, OSError):
                     try:
-                        pub = int(time.mktime(time.strptime(str(pt)[:19], "%Y-%m-%dT%H:%M:%S")))
+                        pub = int(
+                            time.mktime(
+                                time.strptime(str(pt)[:19], "%Y-%m-%dT%H:%M:%S")
+                            )
+                        )
                     except (ValueError, TypeError, OSError):
                         pub = 0
-            self._upsert_article(
-                db,
+            repo.weread_article_upsert(
                 feed_id=feed.id,
                 mp_id=mp_id,
                 article_id=str(a["id"]),
@@ -476,13 +380,12 @@ class WeReadService:
                 publish_time=pub,
             )
         has_history = 0 if len(articles) < DEFAULT_COUNT else 1
-        feed.sync_time = int(time.time())
-        feed.has_history = has_history
-        db.commit()
+        repo.weread_feed_update_sync(feed.id, int(time.time()), has_history)
+        repo.session_commit()
         return {"hasHistory": has_history, "count": len(articles)}
 
     async def get_history_mp_articles(
-        self, db: Session, user_id: int, mp_id: str
+        self, repo: AppRepository, user_id: int, mp_id: str
     ) -> None:
         if not mp_id:
             return
@@ -492,19 +395,16 @@ class WeReadService:
             return
         self._state.in_progress_history_mp[user_id] = {"id": mp_id, "page": 1}
         try:
-            feed = (
-                db.query(WeReadFeed)
-                .filter(WeReadFeed.user_id == user_id, WeReadFeed.mp_id == mp_id)
-                .first()
-            )
+            feed = repo.weread_feed_get(user_id, mp_id)
             if feed and feed.has_history == 0:
                 logger.info("[weread] getHistoryMpArticles(%s) no history", mp_id)
                 return
-            existing = (
-                db.query(WeReadArticle).filter(WeReadArticle.mp_id == mp_id).count()
-            )
+            existing = repo.weread_article_count_for_mp(mp_id)
             start_page = max(1, math.ceil(existing / DEFAULT_COUNT) if existing else 1)
-            self._state.in_progress_history_mp[user_id] = {"id": mp_id, "page": start_page}
+            self._state.in_progress_history_mp[user_id] = {
+                "id": mp_id,
+                "page": start_page,
+            }
 
             for _ in range(HISTORY_MAX_PAGES):
                 st = self._state.in_progress_history_mp.get(user_id, {})
@@ -512,29 +412,32 @@ class WeReadService:
                     break
                 page = st["page"]
                 result = await self.refresh_mp_articles_and_update_feed(
-                    db, user_id, mp_id, page
+                    repo, user_id, mp_id, page
                 )
                 if result["hasHistory"] < 1:
                     break
-                self._state.in_progress_history_mp[user_id] = {"id": mp_id, "page": page + 1}
+                self._state.in_progress_history_mp[user_id] = {
+                    "id": mp_id,
+                    "page": page + 1,
+                }
                 if self._update_delay_ms > 0:
                     await asyncio.sleep(self._update_delay_ms / 1000.0)
         finally:
             self._state.in_progress_history_mp.pop(user_id, None)
 
     async def refresh_all_mp_articles_and_update_feed(
-        self, db: Session, user_id: int
+        self, repo: AppRepository, user_id: int
     ) -> None:
         if user_id in self._state.refresh_all_running:
             logger.info("[weread] refreshAll(user=%s) already running", user_id)
             return
         self._state.refresh_all_running.add(user_id)
         try:
-            feeds = db.query(WeReadFeed).filter(WeReadFeed.user_id == user_id).all()
+            feeds = repo.weread_feed_list_user(user_id)
             for feed in feeds:
                 try:
                     await self.refresh_mp_articles_and_update_feed(
-                        db, user_id, feed.mp_id
+                        repo, user_id, feed.mp_id
                     )
                 except Exception as e:
                     logger.error(
@@ -545,10 +448,10 @@ class WeReadService:
         finally:
             self._state.refresh_all_running.discard(user_id)
 
-    # ---- introspection ----------------------------------------------------
-
     def in_progress_history_mp(self, user_id: int) -> dict:
-        return dict(self._state.in_progress_history_mp.get(user_id, {"id": "", "page": 1}))
+        return dict(
+            self._state.in_progress_history_mp.get(user_id, {"id": "", "page": 1})
+        )
 
     def is_refresh_all_running(self, user_id: int) -> bool:
         return user_id in self._state.refresh_all_running

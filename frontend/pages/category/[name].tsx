@@ -53,37 +53,49 @@ export default function CategoryPage() {
 
   const handleLike = async (e: React.MouseEvent, articleId: string) => {
     e.stopPropagation();
+    const prevEntry = articleActions[articleId];
+    const isCurrentlyLiked = prevEntry?.liked || false;
+    const bookmarked = prevEntry?.bookmarked || false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [articleId]: { liked: !isCurrentlyLiked, bookmarked },
+    }));
     try {
-      const isCurrentlyLiked = articleActions[articleId]?.liked || false;
       if (isCurrentlyLiked) {
         await api.delete("/api/articles/like", { data: { article_id: articleId } });
       } else {
         await api.post("/api/articles/like", { article_id: articleId });
       }
-      setArticleActions(prev => ({
-        ...prev,
-        [articleId]: { ...prev[articleId], liked: !isCurrentlyLiked }
-      }));
     } catch (error) {
       console.error("Failed to like article:", error);
+      setArticleActions((prev) => ({
+        ...prev,
+        [articleId]: { liked: isCurrentlyLiked, bookmarked },
+      }));
     }
   };
 
   const handleBookmark = async (e: React.MouseEvent, articleId: string) => {
     e.stopPropagation();
+    const prevEntry = articleActions[articleId];
+    const isCurrentlyBookmarked = prevEntry?.bookmarked || false;
+    const liked = prevEntry?.liked || false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [articleId]: { liked, bookmarked: !isCurrentlyBookmarked },
+    }));
     try {
-      const isCurrentlyBookmarked = articleActions[articleId]?.bookmarked || false;
       if (isCurrentlyBookmarked) {
         await api.delete("/api/articles/bookmark", { data: { article_id: articleId } });
       } else {
         await api.post("/api/articles/bookmark", { article_id: articleId });
       }
-      setArticleActions(prev => ({
-        ...prev,
-        [articleId]: { ...prev[articleId], bookmarked: !isCurrentlyBookmarked }
-      }));
     } catch (error) {
       console.error("Failed to bookmark article:", error);
+      setArticleActions((prev) => ({
+        ...prev,
+        [articleId]: { liked, bookmarked: isCurrentlyBookmarked },
+      }));
     }
   };
 
@@ -101,9 +113,10 @@ export default function CategoryPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#f3f4f6] flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Loading...</h1>
-          <p className="text-slate-600">Fetching articles from {categoryName}</p>
+        <div className="flex flex-col items-center text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+          <p className="text-slate-600 text-sm mt-3">Loading...</p>
+          <p className="text-slate-500 text-xs mt-1">Fetching articles from {categoryName}</p>
         </div>
       </div>
     );

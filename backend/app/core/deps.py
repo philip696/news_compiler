@@ -1,10 +1,8 @@
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 import logging
 
-from ..db.database import get_db
-from ..db.models import User
+from ..db.app_repository import AppRepository, get_repo
 from .security import decode_access_token, is_jwt_error
 
 logger = logging.getLogger(__name__)
@@ -14,7 +12,7 @@ http_bearer = HTTPBearer(auto_error=False)
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(http_bearer),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ) -> dict:
     """Resolve the current user from the Authorization header.
 
@@ -61,8 +59,7 @@ def get_current_user(
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    # Query database for user
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    user = repo.user_get_by_id(int(user_id))
     if not user:
         logger.warning(
             "Authenticated token references missing user id=%s for request %s",
@@ -71,5 +68,8 @@ def get_current_user(
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    # Return a payload compatible with existing code (include 'sub' and 'id')
-    return {"sub": str(user.id), "id": user.id, "username": user.username}
+    return {
+        "sub": str(user["id"]),
+        "id": user["id"],
+        "username": user["username"],
+    }

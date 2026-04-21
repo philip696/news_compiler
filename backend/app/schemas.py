@@ -75,6 +75,8 @@ class ArticleOut(BaseModel):
     topic_confidence: float = 0.0
     logo_url: str = ""
     main_image: str = ""
+    summary: str = ""
+    authors: str | None = None
 
 
 class StoryClusterOut(BaseModel):

@@ -141,6 +141,7 @@ class SourcePreferenceRequest(BaseModel):
 
 
 class BookmarkRequest(BaseModel):
-    """Bookmark request"""
-    article_id: int
+    """Bookmark / like request (feed article ids are strings: UUID, webhose_*, etc.)."""
+
+    article_id: str
 

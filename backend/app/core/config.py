@@ -16,6 +16,16 @@ class Settings:
     decay_factor: float = float(os.getenv("DECAY_FACTOR", "0.995"))
     similarity_threshold: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
     top_n_stories: int = int(os.getenv("TOP_N_STORIES", "30"))
+    # Ingestion / clustering — lower = faster startup & ranking; raise for richer feeds
+    webhose_max_articles: int = int(os.getenv("WEBHOSE_MAX_ARTICLES", "30"))
+    kaggle_scan_max_total: int = int(os.getenv("KAGGLE_SCAN_MAX_TOTAL", "3200"))
+    kaggle_max_collect_per_category: int = int(
+        os.getenv("KAGGLE_MAX_COLLECT_PER_CATEGORY", "700")
+    )
+    kaggle_max_per_category: int = int(os.getenv("KAGGLE_MAX_PER_CATEGORY", "450"))
+    cluster_max_articles_per_topic: int = int(
+        os.getenv("CLUSTER_MAX_ARTICLES_PER_TOPIC", "200")
+    )
     dataset_path: str = os.getenv("DATASET_PATH", str(Path(__file__).parent.parent.parent / "data" / "webhose_sample" / "news.jsonl"))
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
     celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")

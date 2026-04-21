@@ -55,6 +55,7 @@ if spec and spec.loader:
     FeedResponse = root_schemas.FeedResponse
     MessageResponse = root_schemas.MessageResponse
     StoryClusterOut = root_schemas.StoryClusterOut
+    BookmarkRequest = root_schemas.BookmarkRequest
 
 from app.schemas.wechat import (
     # Enums

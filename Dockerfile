@@ -42,10 +42,9 @@ ENV PATH=/root/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Health check - using curl instead of httpx to avoid dependency issues
-# Increased start-period to 120s for ~10k articles loading (5 categories * 2000 articles)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD curl -f http://127.0.0.1:8000/healthz || exit 1
+# Health check — PORT may be set by the host (e.g. Railway); default 8000.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
+    CMD /bin/sh -c 'curl -fsS "http://127.0.0.1:${PORT:-8000}/healthz" || exit 1'
 
 # Run the application via startup script
 CMD ["/bin/bash", "/app/start.sh"]

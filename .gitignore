@@ -10,5 +10,6 @@ backend/.venv/
 backend/data/*.db
 frontend/node_modules/
 frontend/.next/
+*.tsbuildinfo
 test/node_modules/
 wewe-rss copy/

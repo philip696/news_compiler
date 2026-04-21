@@ -15,8 +15,8 @@ def _log(msg: str):
     sys.stdout.flush()
 
 
-async def run_startup_sequence():
-    """Run the startup sequence with maximum resilience."""
+def run_startup_sequence():
+    """Run the startup sequence with maximum resilience (sync — runs in executor from lifespan)."""
     global_start = time.time()
 
     _log("=" * 60)
@@ -26,7 +26,7 @@ async def run_startup_sequence():
     try:
         _log(f"[{time.time()-global_start:.2f}s] Importing modules...")
         from . import state
-        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_wechat_articles, load_wewe_rss_feeds
+        from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset
         from .clustering.engine import build_story_clusters
         _log(f"[{time.time()-global_start:.2f}s] ✅ Modules imported")
     except Exception as e:
@@ -43,7 +43,7 @@ async def run_startup_sequence():
     _log(f"[{time.time()-global_start:.2f}s] 📥 Phase 1 — Loading WebHose articles...")
     t0 = time.time()
     try:
-        web_count = ingest_mock_feed()
+        web_count = ingest_webhose_jsonl()
         _log(f"[{time.time()-global_start:.2f}s] ✅ WebHose: {web_count} articles ({time.time()-t0:.2f}s)")
     except Exception as e:
         _log(f"[{time.time()-global_start:.2f}s] ❌ WebHose failed ({time.time()-t0:.2f}s): {type(e).__name__}: {e}")

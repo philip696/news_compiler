@@ -1,14 +1,11 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy.orm import Session
 import random
 
 from ..core.deps import get_current_user
-from ..db.database import get_db
-from ..db.models import Bookmark, Like
+from ..db.app_repository import AppRepository, get_repo
 from ..recommendation.ranker import rank_feed_for_user
 from ..schemas import FeedResponse, ArticleOut, ArticleDetailOut
 from .. import state
-from ..services.news_service import get_news_service
 
 router = APIRouter(prefix="/api/feed", tags=["feed"])
 
@@ -94,8 +91,8 @@ async def get_category_articles(
 
     return {
         "category": category_name,
-        "articles": selected_articles,
-        "total": len(articles),
+        "articles": selected,
+        "total": len(selected),
     }
 
 
@@ -103,29 +100,21 @@ async def get_category_articles(
 def get_article(
     article_id: str,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    repo: AppRepository = Depends(get_repo),
 ):
-    """Get full article details by ID with like/bookmark status."""
-    if article_id not in state.articles:
-        raise HTTPException(status_code=404, detail="Article not found")
-    
-    article = state.articles[article_id].copy()
-    
-    # Check if user has liked this article
-    liked = db.query(Like).filter(
-        Like.user_id == current_user["id"],
-        Like.article_id == article_id
-    ).first() is not None
-    
-    # Check if user has bookmarked this article
-    bookmarked = db.query(Bookmark).filter(
-        Bookmark.user_id == current_user["id"],
-        Bookmark.article_id == article_id
-    ).first() is not None
-    
-    article["liked"] = liked
-    article["bookmarked"] = bookmarked
-    
+    """Get full article details by ID with like/bookmark (main feed or WeRead / WeChat)."""
+    uid = current_user["id"]
+    if article_id in state.articles:
+        article = state.articles[article_id].copy()
+    else:
+        weread = repo.weread_articles_as_feed_dicts(uid, frozenset([article_id]))
+        row = weread.get(article_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Article not found")
+        article = row.copy()
+
+    article["liked"] = repo.like_exists(uid, article_id)
+    article["bookmarked"] = repo.bookmark_exists(uid, article_id)
     return article
 
 

@@ -1,15 +1,16 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef, type MouseEvent } from "react";
 import { useRouter } from "next/router";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { api, setAuthToken } from "../services/api";
 import { useAuthStore } from "../store/auth";
-import { useFeed } from "../hooks/useFeed";
+import { useHomeFeedProgressive } from "../hooks/useFeed";
 import { useProtectedRoute } from "../hooks/useProtectedRoute";
 import StoryClusterCard from "../components/StoryClusterCard";
 import ArticleCard from "../components/ArticleCard";
 import WeChatOfficialAccounts from "../components/WeChatOfficialAccounts";
 import { useChatContext } from "../context/ChatContext";
 import { motion } from "framer-motion";
+import { wechatCdnImageProxyUrl } from "../utils/wechatImageProxy";
 
 type Article = {
   id: string;
@@ -28,6 +29,8 @@ type WeReadArticle = {
   title: string;
   picUrl: string;
   publishTime: number | string;
+  liked?: boolean;
+  bookmarked?: boolean;
 };
 
 type WeReadFeed = {
@@ -103,10 +106,11 @@ export default function HomePage() {
       return res.data.stories || [];
     },
     enabled: !!token && searchQuery.length > 0,
-    staleTime: 30_000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
-  const { data: stories = [] } = useFeed(!!token);
+  const { allStories, isLoadingInitial: homeFeedLoading } = useHomeFeedProgressive(!!token);
 
   // Fetch categories
   const { data: categoriesData } = useQuery({
@@ -115,17 +119,9 @@ export default function HomePage() {
       const response = await api.get("/api/feed/categories");
       return response.data.categories || [];
     },
-    enabled: !!token
-  });
-
-  // ── Explore (Kaggle) feed ─────────────────────────────────────────── //
-  const { data: exploreStories = [] } = useQuery({
-    queryKey: ["explore"],
-    queryFn: async () => {
-      const res = await api.get<{ stories: any[] }>("/api/feed/explore", { params: { limit: 50 } });
-      return res.data.stories || [];
-    },
     enabled: !!token,
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
   });
 
   const { data: exploreCategoriesData = [] } = useQuery<string[]>({
@@ -135,13 +131,9 @@ export default function HomePage() {
       return res.data.categories || [];
     },
     enabled: !!token,
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
   });
-
-  // WebHose stories first, Kaggle stories last
-  const allStories = useMemo(
-    () => [...stories, ...exploreStories],
-    [stories, exploreStories]
-  );
 
   // Categories hidden from the sidebar (served by backend but suppressed in UI)
   const HIDDEN_CATEGORIES = useMemo(
@@ -171,7 +163,9 @@ export default function HomePage() {
     queryKey: ["wereadFeeds"],
     queryFn: async () => (await api.get("/api/wechat/mps")).data,
     enabled: !!token && selectedCategory === "wechat",
-    refetchInterval: selectedCategory === "wechat" ? 60_000 : false,
+    refetchInterval: selectedCategory === "wechat" ? 120_000 : false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   const [wechatMpFilter, setWechatMpFilter] = useState<string | null>(null);
@@ -183,7 +177,9 @@ export default function HomePage() {
       return (await api.get("/api/wechat/articles", { params })).data;
     },
     enabled: !!token && selectedCategory === "wechat",
-    refetchInterval: selectedCategory === "wechat" ? 60_000 : false,
+    refetchInterval: selectedCategory === "wechat" ? 120_000 : false,
+    staleTime: 45_000,
+    refetchOnWindowFocus: false,
   });
 
   const auth = async (mode: "register" | "login") => {
@@ -261,73 +257,149 @@ export default function HomePage() {
 
   const handleLikeArticle = async (e: React.MouseEvent, articleId: string) => {
     e.stopPropagation();
+    const prevEntry = articleActions[articleId];
+    const isCurrentlyLiked = prevEntry?.liked || false;
+    const bookmarked = prevEntry?.bookmarked || false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [articleId]: { liked: !isCurrentlyLiked, bookmarked },
+    }));
     try {
-      const isCurrentlyLiked = articleActions[articleId]?.liked || false;
       if (isCurrentlyLiked) {
         await api.delete("/api/articles/like", { data: { article_id: articleId } });
       } else {
         await api.post("/api/articles/like", { article_id: articleId });
       }
-      setArticleActions(prev => ({
-        ...prev,
-        [articleId]: { ...prev[articleId], liked: !isCurrentlyLiked }
-      }));
     } catch (error) {
       console.error("Failed to like article:", error);
+      setArticleActions((prev) => ({
+        ...prev,
+        [articleId]: { liked: isCurrentlyLiked, bookmarked },
+      }));
     }
   };
 
   const handleBookmarkArticle = async (e: React.MouseEvent, articleId: string) => {
     e.stopPropagation();
+    const prevEntry = articleActions[articleId];
+    const isCurrentlyBookmarked = prevEntry?.bookmarked || false;
+    const liked = prevEntry?.liked || false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [articleId]: { liked, bookmarked: !isCurrentlyBookmarked },
+    }));
     try {
-      const isCurrentlyBookmarked = articleActions[articleId]?.bookmarked || false;
       if (isCurrentlyBookmarked) {
         await api.delete("/api/articles/bookmark", { data: { article_id: articleId } });
       } else {
         await api.post("/api/articles/bookmark", { article_id: articleId });
       }
-      setArticleActions(prev => ({
-        ...prev,
-        [articleId]: { ...prev[articleId], bookmarked: !isCurrentlyBookmarked }
-      }));
     } catch (error) {
       console.error("Failed to bookmark article:", error);
+      setArticleActions((prev) => ({
+        ...prev,
+        [articleId]: { liked, bookmarked: isCurrentlyBookmarked },
+      }));
     }
   };
 
   const bookmark = async (articleId: string) => {
+    const prevEntry = articleActions[articleId];
+    const isCurrentlyBookmarked = prevEntry?.bookmarked || false;
+    const liked = prevEntry?.liked || false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [articleId]: { liked, bookmarked: !isCurrentlyBookmarked },
+    }));
     try {
-      const isCurrentlyBookmarked = articleActions[articleId]?.bookmarked || false;
       if (isCurrentlyBookmarked) {
         await api.delete("/api/articles/bookmark", { data: { article_id: articleId } });
       } else {
         await api.post("/api/articles/bookmark", { article_id: articleId });
       }
-      setArticleActions(prev => ({
-        ...prev,
-        [articleId]: { ...prev[articleId], bookmarked: !isCurrentlyBookmarked }
-      }));
       setStatus(isCurrentlyBookmarked ? "Bookmark removed" : "Bookmarked article");
     } catch (error) {
       console.error("Failed to bookmark article:", error);
+      setArticleActions((prev) => ({
+        ...prev,
+        [articleId]: { liked, bookmarked: isCurrentlyBookmarked },
+      }));
       setStatus("Failed to bookmark article");
     }
   };
 
   const like = async (articleId: string) => {
+    const prevEntry = articleActions[articleId];
+    const isCurrentlyLiked = prevEntry?.liked || false;
+    const bookmarked = prevEntry?.bookmarked || false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [articleId]: { liked: !isCurrentlyLiked, bookmarked },
+    }));
     try {
-      const isCurrentlyLiked = articleActions[articleId]?.liked || false;
       if (isCurrentlyLiked) {
         await api.delete("/api/articles/like", { data: { article_id: articleId } });
       } else {
         await api.post("/api/articles/like", { article_id: articleId });
       }
-      setArticleActions(prev => ({
-        ...prev,
-        [articleId]: { ...prev[articleId], liked: !isCurrentlyLiked }
-      }));
     } catch (error) {
       console.error("Failed to like article:", error);
+      setArticleActions((prev) => ({
+        ...prev,
+        [articleId]: { liked: isCurrentlyLiked, bookmarked },
+      }));
+    }
+  };
+
+  const toggleWeChatLike = async (e: MouseEvent, article: WeReadArticle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = article.id;
+    const prevEntry = articleActions[id];
+    const cur = prevEntry?.liked ?? article.liked ?? false;
+    const bm = prevEntry?.bookmarked ?? article.bookmarked ?? false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [id]: { liked: !cur, bookmarked: bm },
+    }));
+    try {
+      if (cur) {
+        await api.delete("/api/articles/like", { data: { article_id: id } });
+      } else {
+        await api.post("/api/articles/like", { article_id: id });
+      }
+    } catch (err) {
+      console.error("Failed to like WeChat article:", err);
+      setArticleActions((prev) => ({
+        ...prev,
+        [id]: { liked: cur, bookmarked: bm },
+      }));
+    }
+  };
+
+  const toggleWeChatBookmark = async (e: MouseEvent, article: WeReadArticle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = article.id;
+    const prevEntry = articleActions[id];
+    const cur = prevEntry?.bookmarked ?? article.bookmarked ?? false;
+    const lk = prevEntry?.liked ?? article.liked ?? false;
+    setArticleActions((prev) => ({
+      ...prev,
+      [id]: { liked: lk, bookmarked: !cur },
+    }));
+    try {
+      if (cur) {
+        await api.delete("/api/articles/bookmark", { data: { article_id: id } });
+      } else {
+        await api.post("/api/articles/bookmark", { article_id: id });
+      }
+    } catch (err) {
+      console.error("Failed to bookmark WeChat article:", err);
+      setArticleActions((prev) => ({
+        ...prev,
+        [id]: { liked: lk, bookmarked: cur },
+      }));
     }
   };
 
@@ -423,7 +495,13 @@ export default function HomePage() {
         </div>
       </nav>
 
-      <main className="relative z-10 mx-auto max-w-screen-2xl p-4 md:p-6 lg:p-8 h-[calc(100vh-4rem)] overflow-y-auto">
+      <main
+        className={`relative z-10 mx-auto max-w-screen-2xl p-4 md:p-6 lg:p-8 ${
+          token
+            ? "flex min-h-0 flex-col h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden"
+            : "h-[calc(100vh-4rem)] overflow-y-auto"
+        }`}
+      >
 
         {!token && (
           <section className="mb-8 mx-auto max-w-md grid gap-4 rounded-3xl border border-slate-200/50 bg-white/80 backdrop-blur-xl p-6 shadow-xl">
@@ -454,7 +532,7 @@ export default function HomePage() {
         )}
 
         {token && (
-          <div className="flex xl:gap-8 h-full">
+          <div className="flex min-h-0 w-full flex-1 xl:gap-8">
 
             {/* Mobile backdrop — taps outside close the drawer */}
             {sidebarOpen && (
@@ -467,20 +545,21 @@ export default function HomePage() {
 
             {/* Sidebar: fixed slide-in drawer on < xl, static column on xl+ */}
             <aside
+              data-testid="wechat-sidebar"
               className={`
-                flex flex-col gap-4 flex-shrink-0 overflow-y-auto
+                flex min-h-0 flex-col gap-4 flex-shrink-0 overflow-y-auto overscroll-y-contain
                 bg-[#f3f4f6] xl:bg-transparent
                 fixed z-40 top-16 left-0 bottom-0 w-72 p-4 pr-2 border-r border-slate-200 shadow-xl
                 transform transition-transform duration-300 ease-out
                 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
-                xl:static xl:translate-x-0 xl:p-0 xl:border-0 xl:shadow-none
-                xl:w-72 xl:max-h-[calc(100vh-8rem)]
+                xl:static xl:translate-x-0 xl:h-full xl:max-h-full xl:self-stretch xl:p-0 xl:border-0 xl:shadow-none
+                xl:w-72
               `}
               aria-hidden={!sidebarOpen && typeof window !== "undefined" && window.innerWidth < 1280}
             >
               <div className="rounded-3xl border border-slate-200/60 bg-white/80 xl:bg-white/70 backdrop-blur-md p-5 shadow-sm">
                 <h3 className="font-semibold text-slate-900 mb-3">Browse</h3>
-                <div className="flex flex-col gap-1 overflow-y-auto max-h-[60vh]">
+                <div className="flex flex-col gap-1">
 
                   {/* Top-level nav */}
                   <button
@@ -533,7 +612,7 @@ export default function HomePage() {
             </aside>
 
             {/* Main Feed, Category Articles, or WeChat Articles */}
-            <section className="flex-1 pb-12 relative">
+            <section className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-12">
               {searchQuery ? (
                 // ── Search Results View ───────────────────────────────── //
                 <>
@@ -555,8 +634,9 @@ export default function HomePage() {
                   </div>
 
                   {searchLoading ? (
-                    <div className="flex justify-center items-center h-40">
+                    <div className="flex flex-col justify-center items-center h-40">
                       <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+                      <p className="text-slate-600 text-sm mt-3">Loading...</p>
                     </div>
                   ) : searchResults.length === 0 ? (
                     <div className="rounded-2xl border border-slate-200 bg-white/70 p-12 text-center max-w-md mx-auto mt-12">
@@ -623,8 +703,9 @@ export default function HomePage() {
                   </div>
 
                   {wereadLoading ? (
-                    <div className="flex justify-center items-center h-40">
+                    <div className="flex flex-col justify-center items-center h-40">
                       <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-green-700" />
+                      <p className="text-slate-600 text-sm mt-3">Loading...</p>
                     </div>
                   ) : wereadArticles.length === 0 ? (
                     <div className="rounded-2xl border border-slate-200 bg-white/70 p-12 text-center max-w-md mx-auto mt-12">
@@ -657,12 +738,20 @@ export default function HomePage() {
                           lineClamp = "line-clamp-3";
                           padding = "p-5";
                         }
+                        const isWl = articleActions[article.id]?.liked ?? article.liked ?? false;
+                        const isWb = articleActions[article.id]?.bookmarked ?? article.bookmarked ?? false;
                         return (
-                          <motion.a
+                          <motion.div
                             key={article.id}
-                            href={`https://mp.weixin.qq.com/s/${article.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            role="link"
+                            tabIndex={0}
+                            onClick={() => router.push(`/article/${article.id}`)}
+                            onKeyDown={(ev) => {
+                              if (ev.key === "Enter" || ev.key === " ") {
+                                ev.preventDefault();
+                                router.push(`/article/${article.id}`);
+                              }
+                            }}
                             initial={{ opacity: 0, scale: 0.98, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             transition={{ duration: 0.3, ease: "easeOut" }}
@@ -671,21 +760,74 @@ export default function HomePage() {
                             {/* Background image */}
                             <div
                               className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
-                              style={{ backgroundImage: article.picUrl ? `url(${article.picUrl})` : "linear-gradient(135deg, #1a472a 0%, #2d6a4f 100%)" }}
+                              style={{
+                                backgroundImage: article.picUrl
+                                  ? `url("${wechatCdnImageProxyUrl(article.picUrl)}")`
+                                  : "linear-gradient(135deg, #1a472a 0%, #2d6a4f 100%)",
+                              }}
                             />
                             {/* Gradient overlay */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/10" />
-                            {/* WeChat badge */}
                             <div className={`relative flex flex-col justify-between ${padding} h-full z-10`}>
-                              <div className="flex justify-between items-start">
+                              <div className="flex justify-between items-start gap-2">
                                 <span className="inline-block rounded-lg bg-green-700/80 backdrop-blur-md px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white border border-green-500/30">
                                   WeChat
                                 </span>
-                                <span className="rounded-full bg-black/50 backdrop-blur-md px-2.5 py-1 text-[10px] font-semibold text-white/80 border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  Open ↗
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => toggleWeChatLike(e, article)}
+                                    className={`flex h-8 w-8 items-center justify-center rounded-full backdrop-blur-md transition-all shadow-sm border ${
+                                      isWl
+                                        ? "bg-red-500/90 border-red-500 text-white"
+                                        : "bg-black/40 border-white/20 text-white hover:bg-black/60"
+                                    }`}
+                                    title={isWl ? "Unlike" : "Like"}
+                                  >
+                                    <svg
+                                      className="h-4 w-4"
+                                      fill={isWl ? "currentColor" : "none"}
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth="2"
+                                        d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                                      />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => toggleWeChatBookmark(e, article)}
+                                    className={`flex h-8 w-8 items-center justify-center rounded-full backdrop-blur-md transition-all shadow-sm border ${
+                                      isWb
+                                        ? "bg-amber-500/90 border-amber-500 text-white"
+                                        : "bg-black/40 border-white/20 text-white hover:bg-black/60"
+                                    }`}
+                                    title={isWb ? "Remove bookmark" : "Bookmark"}
+                                  >
+                                    <svg
+                                      className="h-4 w-4"
+                                      fill={isWb ? "currentColor" : "none"}
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth="2"
+                                        d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
+                                      />
+                                    </svg>
+                                  </button>
+                                  <span className="hidden sm:inline rounded-full bg-black/50 backdrop-blur-md px-2 py-1 text-[10px] font-semibold text-white/80 border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    Open ↗
+                                  </span>
+                                </div>
                               </div>
-                              <div className="flex flex-col gap-2 mt-auto">
+                              <div className="flex flex-col gap-2 mt-auto pointer-events-none">
                                 <h3 className={`${lineClamp} ${titleSize} leading-tight tracking-tight text-white drop-shadow-md`}>
                                   {article.title}
                                 </h3>
@@ -696,7 +838,7 @@ export default function HomePage() {
                                 </div>
                               </div>
                             </div>
-                          </motion.a>
+                          </motion.div>
                         );
                       })}
                     </div>
@@ -711,9 +853,14 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {allStories.length === 0 ? (
-                    <div className="flex justify-center items-center h-40">
+                  {homeFeedLoading ? (
+                    <div className="flex flex-col justify-center items-center h-40">
                       <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+                      <p className="text-slate-600 text-sm mt-3">Loading...</p>
+                    </div>
+                  ) : allStories.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white/70 p-12 text-center max-w-md mx-auto mt-8">
+                      <p className="text-slate-600">No stories in your feed yet.</p>
                     </div>
                   ) : (
                     <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 auto-rows-[280px]">
@@ -768,8 +915,9 @@ export default function HomePage() {
                     <span className="text-sm font-medium text-slate-500 uppercase tracking-wider">{categoryArticles.length} articles</span>
                   </div>
                   {loadingCategory ? (
-                    <div className="flex justify-center items-center h-40">
-                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900"></div>
+                    <div className="flex flex-col justify-center items-center h-40">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+                      <p className="text-slate-600 text-sm mt-3">Loading...</p>
                     </div>
                   ) : (
                     <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 auto-rows-[280px]">

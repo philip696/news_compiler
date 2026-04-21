@@ -5,6 +5,8 @@ import { api, BASE_URL, joinUrl } from "../../services/api";
 import { useAuthStore } from "../../store/auth";
 import { useProtectedRoute } from "../../hooks/useProtectedRoute";
 import { useChatContext } from "../../context/ChatContext";
+import AIChat from "../../components/AIChat";
+import { wechatCdnImageProxyUrl } from "../../utils/wechatImageProxy";
 
 interface Article {
   id: string;
@@ -18,10 +20,24 @@ interface Article {
   topic_confidence: number;
   logo_url: string;
   main_image: string;
+  summary?: string;
   authors?: string;
   liked?: boolean;
   bookmarked?: boolean;
 }
+
+const isWeChatTopic = (topic: string) => topic?.toLowerCase() === "wechat";
+
+/** Resolve feed image URL: local /data paths, WeChat CDN via backend proxy, else as-is. */
+const articleImageSrc = (url: string | undefined, topic: string): string => {
+  const u = (url ?? "").trim();
+  if (!u) return "";
+  if (u.startsWith("/data")) return joinUrl(BASE_URL, u);
+  if (isWeChatTopic(topic) || /mmbiz\.qpic\.cn|wx\.qlogo\.cn/i.test(u)) {
+    return wechatCdnImageProxyUrl(u);
+  }
+  return u;
+};
 
 const getLogoPath = (sourceId: string): string => {
   const normalized = sourceId.toLowerCase().trim();
@@ -36,6 +52,13 @@ const getLogoPath = (sourceId: string): string => {
   const baseName = normalized.split('.')[0];
   const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
   return joinUrl(BASE_URL, `/data/logos/${filename}`);
+};
+
+const articleLogoSrc = (article: Article): string => {
+  if (isWeChatTopic(article.topic) && article.logo_url?.trim()) {
+    return articleImageSrc(article.logo_url, article.topic);
+  }
+  return getLogoPath(article.source_id);
 };
 
 export default function ArticlePage() {
@@ -82,41 +105,47 @@ export default function ArticlePage() {
 
   const handleLike = async () => {
     if (!article) return;
+    const was = isLiked;
+    setIsLiked(!was);
     try {
-      if (isLiked) {
-        await api.delete("/api/articles/like", { 
+      if (was) {
+        await api.delete("/api/articles/like", {
           data: { article_id: article.id },
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
         });
       } else {
-        await api.post("/api/articles/like", 
+        await api.post(
+          "/api/articles/like",
           { article_id: article.id },
           { headers: { Authorization: `Bearer ${token}` } }
         );
       }
-      setIsLiked(!isLiked);
     } catch (error) {
       console.error("Failed to like article:", error);
+      setIsLiked(was);
     }
   };
 
   const handleBookmark = async () => {
     if (!article) return;
+    const was = isBookmarked;
+    setIsBookmarked(!was);
     try {
-      if (isBookmarked) {
-        await api.delete("/api/articles/bookmark", { 
+      if (was) {
+        await api.delete("/api/articles/bookmark", {
           data: { article_id: article.id },
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
         });
       } else {
-        await api.post("/api/articles/bookmark", 
+        await api.post(
+          "/api/articles/bookmark",
           { article_id: article.id },
           { headers: { Authorization: `Bearer ${token}` } }
         );
       }
-      setIsBookmarked(!isBookmarked);
     } catch (error) {
       console.error("Failed to bookmark article:", error);
+      setIsBookmarked(was);
     }
   };
 
@@ -134,9 +163,9 @@ export default function ArticlePage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#f3f4f6] flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Loading...</h1>
-          <p className="text-slate-600">Fetching article details</p>
+        <div className="flex flex-col items-center text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+          <p className="text-slate-600 text-sm mt-3">Loading...</p>
         </div>
       </div>
     );
@@ -193,7 +222,7 @@ export default function ArticlePage() {
             <div className="mb-6 flex items-center gap-4">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 overflow-hidden shadow-sm">
                 <img 
-                  src={getLogoPath(article.source_id)}
+                  src={articleLogoSrc(article)}
                   alt={article.source_name}
                   className="h-full w-full object-cover"
                   onError={(e) => {
@@ -222,6 +251,11 @@ export default function ArticlePage() {
               <h1 className="text-4xl font-bold leading-tight text-slate-900 mb-4">
                 {article.title}
               </h1>
+              {article.summary?.trim() && (
+                <p className="text-lg text-slate-600 leading-relaxed border-l-4 border-green-600/70 pl-4 py-1 mb-2">
+                  {article.summary.trim()}
+                </p>
+              )}
             </div>
           </div>
 
@@ -230,7 +264,7 @@ export default function ArticlePage() {
             {article.main_image ? (
               <>
                 <img
-                  src={article.main_image.startsWith('/data') ? joinUrl(BASE_URL, article.main_image) : article.main_image}
+                  src={articleImageSrc(article.main_image, article.topic)}
                   alt={article.title}
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={(e) => {
