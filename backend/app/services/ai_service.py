@@ -17,10 +17,21 @@ class AIService:
         self.timeout = 120  # AI requests can take time
         
         if not self.api_key:
-            raise ValueError("OLLAMA_API_KEY environment variable is required for Ollama Cloud API")
+            logger.warning(
+                "OLLAMA_API_KEY is not set; AIService is disabled. "
+                "AI-powered endpoints will return 503 until the key is configured."
+            )
+
+    def _require_key(self) -> None:
+        if not self.api_key:
+            raise RuntimeError(
+                "OLLAMA_API_KEY is not configured. Set it in the deployment environment."
+            )
     
     async def health_check(self) -> bool:
         """Check if Ollama Cloud API is available."""
+        if not self.api_key:
+            return False
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -128,6 +139,7 @@ Answer:"""
     
     async def _call_ai(self, prompt: str) -> str:
         """Call Ollama Cloud API with the prompt."""
+        self._require_key()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 headers = {"Authorization": f"Bearer {self.api_key}"}
