@@ -1,181 +1,158 @@
 import httpx
+import json
 import logging
 from typing import Optional
+
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class AIService:
-    """Service for AI-powered tasks like summaries, analysis, etc."""
-    
+    """Service for AI-powered tasks using DeepSeek's OpenAI-compatible chat API."""
+
     def __init__(self):
-        # Ollama Cloud API endpoint
-        self.ollama_url = settings.OLLAMA_BASE_URL or "https://api.ollama.com"
-        self.api_key = settings.OLLAMA_API_KEY
-        self.model = settings.OLLAMA_MODEL or "mistral"  # mistral is faster and good for summaries
-        self.timeout = 120  # AI requests can take time
-        
+        self.base_url = settings.DEEPSEEK_BASE_URL or "https://api.deepseek.com"
+        self.api_key = settings.DEEPSEEK_API_KEY
+        self.model = settings.DEEPSEEK_MODEL or "deepseek-chat"
+        self.timeout = 120
+
         if not self.api_key:
             logger.warning(
-                "OLLAMA_API_KEY is not set; AIService is disabled. "
+                "DEEPSEEK_API_KEY is not set; AIService is disabled. "
                 "AI-powered endpoints will return 503 until the key is configured."
             )
 
     def _require_key(self) -> None:
         if not self.api_key:
             raise RuntimeError(
-                "OLLAMA_API_KEY is not configured. Set it in the deployment environment."
+                "DEEPSEEK_API_KEY is not configured. Set it in the deployment environment."
             )
-    
+
     async def health_check(self) -> bool:
-        """Check if Ollama Cloud API is available."""
+        """Check if DeepSeek API is reachable and the key works."""
         if not self.api_key:
             return False
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                headers = {"Authorization": f"Bearer {self.api_key}"}
-                response = await client.get(f"{self.ollama_url}/api/tags", headers=headers)
-                return response.status_code == 200
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self.base_url}/models",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                return resp.status_code == 200
         except Exception as e:
-            logger.error(f"Ollama Cloud API health check failed: {e}")
+            logger.error(f"DeepSeek health check failed: {e}")
             return False
-    
+
     async def summarize_article(
         self,
         title: str,
         content: str,
         max_length: int = 200,
     ) -> str:
-        """Summarize an article using local AI."""
         if not content:
             raise ValueError("Article content cannot be empty")
-        
-        # Truncate content if too long to avoid timeout
-        max_tokens = 3000
-        content_truncated = content[:max_tokens]
-        
-        prompt = f"""Summarize the following article in {max_length} words or less. Be concise and capture the main points.
 
-Title: {title}
+        content_truncated = content[:3000]
+        user_prompt = (
+            f"Summarize the following article in {max_length} words or less. "
+            f"Be concise and capture the main points.\n\n"
+            f"Title: {title}\n\nContent:\n{content_truncated}"
+        )
+        return await self._chat(
+            system="You are a concise news summarization assistant.",
+            user=user_prompt,
+            temperature=0.3,
+        )
 
-Content:
-{content_truncated}
-
-Summary:"""
-        
-        try:
-            return await self._call_ai(prompt)
-        except Exception as e:
-            logger.error(f"Summarization error: {e}")
-            raise
-    
     async def analyze_sentiment(self, text: str) -> dict:
-        """Analyze sentiment of text (positive, negative, neutral)."""
-        prompt = f"""Analyze the sentiment of the following text and respond with ONLY valid JSON in this format:
-{{"sentiment": "positive|negative|neutral", "confidence": 0.0-1.0, "reason": "brief explanation"}}
-
-Text: {text}
-
-Response (JSON only):"""
-        
+        user_prompt = (
+            "Analyze the sentiment of the following text and respond with ONLY valid JSON:\n"
+            '{"sentiment": "positive|negative|neutral", "confidence": 0.0-1.0, "reason": "brief explanation"}\n\n'
+            f"Text: {text}"
+        )
+        response = await self._chat(
+            system="You are a sentiment classifier. Respond with JSON only.",
+            user=user_prompt,
+            temperature=0.0,
+        )
         try:
-            response = await self._call_ai(prompt)
-            # Try to extract JSON from response
-            import json
-            # Find JSON object in response
-            start = response.find('{')
-            end = response.rfind('}') + 1
+            start = response.find("{")
+            end = response.rfind("}") + 1
             if start != -1 and end > start:
-                json_str = response[start:end]
-                return json.loads(json_str)
-            return {"sentiment": "unknown", "confidence": 0.0, "reason": "Could not parse response"}
+                return json.loads(response[start:end])
         except Exception as e:
-            logger.error(f"Sentiment analysis error: {e}")
-            raise
-    
+            logger.error(f"Sentiment parse error: {e}")
+        return {"sentiment": "unknown", "confidence": 0.0, "reason": "Could not parse response"}
+
     async def generate_tags(self, title: str, content: str, count: int = 5) -> list[str]:
-        """Generate tags for an article."""
         content_truncated = content[:2000]
-        
-        prompt = f"""Generate {count} relevant tags for this article. Return only the tags as a comma-separated list, no other text.
+        user_prompt = (
+            f"Generate {count} relevant tags for this article. "
+            "Return ONLY a comma-separated list of tags, no other text.\n\n"
+            f"Title: {title}\n\nContent:\n{content_truncated}"
+        )
+        response = await self._chat(
+            system="You generate short, relevant tags.",
+            user=user_prompt,
+            temperature=0.3,
+        )
+        tags = [tag.strip() for tag in response.split(",") if tag.strip()]
+        return tags[:count]
 
-Title: {title}
-
-Content:
-{content_truncated}
-
-Tags:"""
-        
-        try:
-            response = await self._call_ai(prompt)
-            # Parse comma-separated tags
-            tags = [tag.strip() for tag in response.split(',')]
-            return tags[:count]
-        except Exception as e:
-            logger.error(f"Tag generation error: {e}")
-            raise
-    
     async def answer_question(self, question: str, article_title: str, article_content: str) -> str:
-        """Answer a question about an article."""
         content_truncated = article_content[:3000]
-        
-        prompt = f"""Based on the following article, answer this question concisely:
+        user_prompt = (
+            f"Article Title: {article_title}\n\n"
+            f"Article Content:\n{content_truncated}\n\n"
+            f"Question: {question}\n\nAnswer concisely based only on the article."
+        )
+        return await self._chat(
+            system="You answer questions strictly grounded in the supplied article.",
+            user=user_prompt,
+            temperature=0.2,
+        )
 
-Article Title: {article_title}
-
-Article Content:
-{content_truncated}
-
-Question: {question}
-
-Answer:"""
-        
-        try:
-            return await self._call_ai(prompt)
-        except Exception as e:
-            logger.error(f"Question answering error: {e}")
-            raise
-    
-    async def _call_ai(self, prompt: str) -> str:
-        """Call Ollama Cloud API with the prompt."""
+    async def _chat(self, system: str, user: str, temperature: float = 0.3) -> str:
+        """Call DeepSeek /chat/completions (OpenAI-compatible) with a system+user message."""
         self._require_key()
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "temperature": temperature,
+        }
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                headers = {"Authorization": f"Bearer {self.api_key}"}
-                response = await client.post(
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "temperature": 0.3,  # Lower temperature for more consistent results
+                resp = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
                     },
-                    headers=headers
                 )
-                
-                if response.status_code != 200:
-                    raise Exception(f"Ollama Cloud API error: {response.status_code} - {response.text}")
-                
-                data = response.json()
-                return data.get("response", "").strip()
-        
+                if resp.status_code != 200:
+                    raise Exception(f"DeepSeek API error: {resp.status_code} - {resp.text}")
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
         except httpx.ConnectError:
-            logger.error(f"Cannot connect to Ollama Cloud API at {self.ollama_url}")
+            logger.error(f"Cannot connect to DeepSeek at {self.base_url}")
             raise Exception(
-                f"AI service unavailable. Check your OLLAMA_API_KEY and ensure the API endpoint is accessible."
+                "AI service unavailable. Check DEEPSEEK_API_KEY and network access to api.deepseek.com."
             )
         except Exception as e:
-            logger.error(f"AI API call failed: {e}")
+            logger.error(f"DeepSeek API call failed: {e}")
             raise
 
 
-# Singleton instance
 _ai_service: Optional[AIService] = None
 
 
 def get_ai_service() -> AIService:
-    """Get or create AI service instance."""
     global _ai_service
     if _ai_service is None:
         _ai_service = AIService()

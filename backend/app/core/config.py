@@ -20,10 +20,10 @@ class Settings:
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
     celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
     
-    # AI Service (Ollama Cloud)
-    OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "https://api.ollama.com")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
+    # AI Service (DeepSeek — OpenAI-compatible chat API)
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     
     # WeChat OAuth Configuration
     WECHAT_APP_ID: str = os.getenv("WECHAT_APP_ID", "")

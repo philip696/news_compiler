@@ -39,10 +39,10 @@ async def ai_health(current_user: dict = Depends(get_current_user)):
     if not is_healthy:
         raise HTTPException(
             status_code=503,
-            detail="AI service (Ollama) is not available. Make sure it's running at http://localhost:11434"
+            detail="AI service (DeepSeek) is not available. Check DEEPSEEK_API_KEY and network access to api.deepseek.com.",
         )
-    
-    return {"status": "healthy", "service": "ollama"}
+
+    return {"status": "healthy", "service": "deepseek"}
 
 
 @router.post("/summarize")

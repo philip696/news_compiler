@@ -38,7 +38,7 @@ async def summarize_article(
     request: SummarizeRequest,
     current_user: dict = Depends(get_current_user)
 ):
-    """Summarize an article using Ollama AI.
+    """Summarize an article using DeepSeek AI.
     
     Args:
         request: Contains article_id, article_content, article_title
@@ -179,34 +179,32 @@ async def chat(
 
 @router.get("/health")
 def chatbot_health():
-    """Check chatbot service health and Ollama API status."""
+    """Check chatbot service health and DeepSeek API status."""
     try:
         from ..core.config import settings
         import asyncio
-        
-        # Check if Ollama API is configured
-        has_ollama_key = bool(settings.OLLAMA_API_KEY)
-        has_ollama_url = bool(settings.OLLAMA_BASE_URL)
+
+        has_key = bool(settings.DEEPSEEK_API_KEY)
+        has_url = bool(settings.DEEPSEEK_BASE_URL)
         has_articles = len(chatbot.articles) > 0
-        
-        # Try to check Ollama health asynchronously
+
         try:
             health = asyncio.run(chatbot.ai_service.health_check())
-        except:
+        except Exception:
             health = False
-        
+
         return {
-            'status': 'healthy' if (has_ollama_key and has_articles and health) else 'degraded',
-            'ollama_configured': has_ollama_key and has_ollama_url,
-            'ollama_accessible': health,
+            'status': 'healthy' if (has_key and has_articles and health) else 'degraded',
+            'deepseek_configured': has_key and has_url,
+            'deepseek_accessible': health,
             'articles_indexed': len(chatbot.articles),
             'vectorizer_ready': chatbot.article_vectors is not None,
-            'ai_model': settings.OLLAMA_MODEL or 'mistral',
-            'ai_endpoint': settings.OLLAMA_BASE_URL or 'https://api.ollama.com'
+            'ai_model': settings.DEEPSEEK_MODEL or 'deepseek-chat',
+            'ai_endpoint': settings.DEEPSEEK_BASE_URL or 'https://api.deepseek.com',
         }
     except Exception as e:
         return {
             'status': 'error',
             'message': str(e),
-            'ollama_configured': False
+            'deepseek_configured': False,
         }

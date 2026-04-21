@@ -1,4 +1,4 @@
-"""Chatbot service for article summarization and advanced search using Ollama AI."""
+"""Chatbot service for article summarization and advanced search using DeepSeek AI."""
 
 import asyncio
 from typing import List, Dict, Optional
@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ChatbotService:
-    """Service for handling chatbot queries using Ollama AI."""
+    """Service for handling chatbot queries using DeepSeek AI."""
     
     def __init__(self):
         self.ai_service = AIService()
@@ -91,26 +91,25 @@ class ChatbotService:
             print(f"Search error: {e}")
             return []
     
-    async def call_ollama(self, prompt: str, max_tokens: int = 500) -> str:
-        """Call Ollama AI for text generation."""
+    async def call_ai(self, prompt: str, max_tokens: int = 500) -> str:
+        """Call DeepSeek AI for text generation (user-only prompt)."""
         try:
-            return await self.ai_service._call_ai(prompt)
+            return await self.ai_service._chat(
+                system="You are a helpful news assistant.",
+                user=prompt,
+                temperature=0.3,
+            )
         except Exception as e:
-            logger.error(f"Ollama AI error: {e}")
-            return f"Error calling Ollama AI: {str(e)}"
-    
+            logger.error(f"DeepSeek AI error: {e}")
+            return f"Error calling DeepSeek AI: {str(e)}"
+
     async def summarize_article(self, article_content: str, article_title: str) -> str:
-        """Summarize an article using Ollama AI."""
-        prompt = f"""Please provide a concise summary (3-4 sentences) of the following article:
-
-Title: {article_title}
-
-Content:
-{article_content[:2000]}
-
-Summary:"""
-        
-        return await self.call_ollama(prompt, max_tokens=300)
+        """Summarize an article using DeepSeek AI."""
+        return await self.ai_service.summarize_article(
+            title=article_title,
+            content=article_content,
+            max_length=200,
+        )
     
     async def search_and_compile(self, query: str, topic: Optional[str] = None, 
                           keywords: Optional[List[str]] = None, limit: int = 5) -> Dict:
@@ -125,7 +124,7 @@ Summary:"""
                 'count': 0
             }
         
-        # Build context from articles for Ollama
+        # Build context from articles for DeepSeek
         context = "Found articles:\n"
         for i, article in enumerate(articles, 1):
             context += f"{i}. {article['title']} (Topic: {article['topic']})\n"
@@ -136,7 +135,7 @@ Summary:"""
 
 Please provide a brief synthesis (2-3 sentences) of how these articles relate to the user's request."""
         
-        synthesis = await self.call_ollama(prompt, max_tokens=200)
+        synthesis = await self.call_ai(prompt, max_tokens=200)
         
         return {
             'query': query,
