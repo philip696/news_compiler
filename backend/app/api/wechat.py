@@ -56,9 +56,23 @@ _IMG_ALLOWED_HOSTS = {
     "mmbiz.qlogo.cn",
     "wx.qlogo.cn",
     "wx1.sinaimg.cn",
+    "wx2.sinaimg.cn",
     "thirdwx.qlogo.cn",
+    "thirdwx.qpic.cn",
     "mp.weixin.qq.com",
+    "res.wx.qq.com",
 }
+
+
+def _proxy_image_host_allowed(host: str) -> bool:
+    """Tencent CDNs use many subdomains (mmbiz*, thirdwx*, …). Allow explicit list + *.qpic.cn / *.qlogo.cn."""
+    h = (host or "").lower().rstrip(".")
+    if not h:
+        return False
+    if any(h == root or h.endswith("." + root) for root in _IMG_ALLOWED_HOSTS):
+        return True
+    # New shard hostnames appear often; both suffixes are controlled by Tencent.
+    return h.endswith(".qpic.cn") or h.endswith(".qlogo.cn")
 
 
 @router.get("/img")
@@ -77,9 +91,13 @@ async def proxy_wechat_image(url: str = Query(..., min_length=8, max_length=2048
         return Response(status_code=400, content=b"bad url")
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    # Allow exact match or any subdomain of the whitelisted roots.
-    if not any(host == h or host.endswith("." + h) for h in _IMG_ALLOWED_HOSTS):
-        return Response(status_code=400, content=b"host not allowed")
+    if not _proxy_image_host_allowed(host):
+        logger.info("wechat/img rejected host=%s url_prefix=%s", host, url[:80])
+        return Response(
+            status_code=400,
+            content=f"host not allowed: {host}".encode(),
+            media_type="text/plain",
+        )
 
     headers = {
         "User-Agent": (

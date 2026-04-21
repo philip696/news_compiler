@@ -6,7 +6,10 @@ import { useAuthStore } from "../../store/auth";
 import { useProtectedRoute } from "../../hooks/useProtectedRoute";
 import { useChatContext } from "../../context/ChatContext";
 import AIChat from "../../components/AIChat";
-import { wechatCdnImageProxyUrl } from "../../utils/wechatImageProxy";
+import {
+  isWeChatCdnUrl,
+  wechatCdnImageProxyUrl,
+} from "../../utils/wechatImageProxy";
 
 interface Article {
   id: string;
@@ -33,7 +36,7 @@ const articleImageSrc = (url: string | undefined, topic: string): string => {
   const u = (url ?? "").trim();
   if (!u) return "";
   if (u.startsWith("/data")) return joinUrl(BASE_URL, u);
-  if (isWeChatTopic(topic) || /mmbiz\.qpic\.cn|wx\.qlogo\.cn/i.test(u)) {
+  if (isWeChatTopic(topic) || isWeChatCdnUrl(u)) {
     return wechatCdnImageProxyUrl(u);
   }
   return u;

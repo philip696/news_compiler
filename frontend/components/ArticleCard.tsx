@@ -1,7 +1,10 @@
 import { motion } from "framer-motion";
 import { useRouter } from "next/router";
 import { BASE_URL, joinUrl } from "../services/api";
-import { wechatCdnImageProxyUrl } from "../utils/wechatImageProxy";
+import {
+  isWeChatCdnUrl,
+  wechatCdnImageProxyUrl,
+} from "../utils/wechatImageProxy";
 
 export interface Article {
   id: string;
@@ -71,7 +74,7 @@ const isWeChatArticle = (article: Article): boolean => {
 
 const needsWechatImageProxy = (article: Article, imageUrl: string): boolean => {
   if (isWeChatArticle(article)) return true;
-  return /mmbiz\.qpic\.cn|wx\.qlogo\.cn/i.test(imageUrl);
+  return isWeChatCdnUrl(imageUrl);
 };
 
 /** Same background treatment as WeChat story cards on the home grid (proxy + gradient fallback). */
