@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { useWeChatStore } from "../../store/wechat";
-import { api } from "../../services/api";
+import { handleWeChatCallback } from "../../services/wechatApi";
 
 export default function WeChatCallback() {
   const router = useRouter();
@@ -10,61 +10,69 @@ export default function WeChatCallback() {
   const [isProcessing, setIsProcessing] = useState(true);
 
   useEffect(() => {
-    const handleCallback = async () => {
-      try {
-        // Get code and state from query parameters
-        const { code, state } = router.query;
+    if (!router.isReady) return;
 
-        if (!code) {
+    const run = async () => {
+      try {
+        const code = router.query.code;
+        const state = router.query.state;
+        if (!code || !state) {
           throw new Error("No authorization code received from WeChat");
         }
 
-        // Exchange code for token with backend
-        const response = await api.post("/api/wechat/auth/callback", {
-          code,
-          state,
+        const data = await handleWeChatCallback(String(code), String(state));
+        if (!data.access_token || !data.user?.openid) {
+          throw new Error("Invalid response from server");
+        }
+
+        setWeChatAuth(data.access_token, {
+          openid: data.user.openid,
+          nickname: data.user.nickname,
+          avatar: data.user.avatar,
         });
 
-        const { access_token, user } = response.data;
+        await router.replace("/wechat/accounts");
+      } catch (err: unknown) {
+        const ax = err as { response?: { data?: { detail?: string } }; message?: string };
+        const msg =
+          ax.response?.data?.detail ||
+          (err instanceof Error ? err.message : null) ||
+          "Authentication failed. Please try again.";
+        setError(String(msg));
+      } finally {
+        setIsProcessing(false);
+      }
+    };
 
-        if (!access_token || !user        if (!access_token || !user        if (!access_token || !user        if (!access_te         if (!access_token || !user        to         if (!access_token || !userh(acces        if (!access_token || !user        if (!acc
-                                                                                      cc                          edir                                            ec                                       ) {                                                                                  err.response?.data?.detail ||
-            err.message ||
-            "Authentication failed. Please try again."
-        );
-        setIsProcessing(fa        set }
-    };
-    };
- setIsProcessing(fa        set }
-se try again."
-               isR  dy, router.query, setWeChatAuth]);
+    void run();
+  }, [router, router.isReady, router.query, setWeChatAuth]);
 
   return (
-    <div c    <div c    <div c    <div c    <div c    <div c    <div c    <div to    <div c    x items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d        <d-white/20 border-t-emerald-400 rounded-full animate-spin" />
-                <p className="text-white font-semibold">Processing login...</p>
-                <p className="text-slate-400 text-sm">
-                  Please wait while we complete your authentication
-                </p>
-              </div>
-            </>
-          ) : (
-                                                             d t          m                                     Error
-                                          ss            -re                                          ss        d-20                         {error}
-              </div>
-              <div className="space-y-3">
-                <button
-                  onCli                  onCli               }
-                  onCli                  onCli               }
-                                      ss        d-20                         {error}
-old rounded-lg transition-all duration-200 transform hover:scale-105 active:scale-95"
-                >
-                  Back to Login
-                </button>
-                <a
-                                                                                x-                                                     fo                                                                  :s            ive:scale-95"
-                >
-                  Try Alternat                  Try Alternat                  Try Alternat                  Try Alternat                  Try Alteiv>
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
+      <div className="w-full max-w-md text-center">
+        {isProcessing ? (
+          <>
+            <div className="inline-block w-12 h-12 border-4 border-white/20 border-t-emerald-400 rounded-full animate-spin mb-4" />
+            <p className="text-white font-semibold">Processing login...</p>
+            <p className="text-slate-400 text-sm mt-2">
+              Please wait while we complete your authentication
+            </p>
+          </>
+        ) : error ? (
+          <>
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 mb-6">
+              <p className="text-red-200">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => router.push("/wechat/login")}
+              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg"
+            >
+              Back to Login
+            </button>
+          </>
+        ) : null}
+      </div>
+    </div>
   );
 }

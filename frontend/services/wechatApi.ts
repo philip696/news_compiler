@@ -1,14 +1,24 @@
 import { api } from "./api";
 
+/** Pool account (GET /api/wechat/accounts) or MP feed row (GET /api/wechat/mps) — UI may use either shape. */
 export interface WeChatAccount {
   id: string;
-  wechat_account_id: string;
-  wechat_account_name: string;
+  name?: string | null;
+  status?: number;
+  blockedToday?: boolean;
+  mpName?: string;
+  mpCover?: string;
+  mpIntro?: string;
+  updateTime?: number;
+  syncTime?: number;
+  articleCount?: number;
+  is_muted?: boolean;
+  wechat_account_id?: string;
+  wechat_account_name?: string;
   wechat_account_avatar?: string;
-  is_muted: boolean;
   last_sync_time?: string;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface AddWeChatAccountRequest {
@@ -21,70 +31,73 @@ export interface WeChatAccountsResponse {
 }
 
 /**
- * Get all WeChat accounts subscribed by current user
+ * Subscribed Official Accounts (MP feeds) — matches GET /api/wechat/mps.
  */
 export async function getWeChatAccounts(): Promise<WeChatAccount[]> {
-  try {
-    const response = await api.get<WeChatAccountsResponse>("/api/wechat/accounts");
-    return response.data.accounts || [];
-  } catch (error) {
-    console.error("Failed to fetch WeChat accounts:", error);
-    throw error;
-  }
+  const response = await api.get<WeChatAccount[]>("/api/wechat/mps");
+  return Array.isArray(response.data) ? response.data : [];
 }
 
 /**
- * Add a new WeChat account subscription
+ * Add an Official Account: wxs article URL, or raw mp id (POST /mps or /mps/by-id).
  */
-export async function addWeChatAccount(
-  wechatAccountId: string
-): Promise<WeChatAc): Promise<WeChatAc): Promise<WeChatAc): Promise<WeChatAc): Promise<WeChatAc): Promisun): Promise<WeChatAc): Promi_id): Promise<WeChatAc): Promise<Wre):rn response.): Promise<WeChatAc): Pr{
-                             add W                             throw                    *                         su                 port                   oveWeCh                             add W     Promise<void> {
-  try {
-    await api.delete(`/api/wechat/accounts/${subscriptionId}`);
-  } catch (error) {
-    console.error("Failed to remove WeChat account:", error);
-    throw error;
-                                                                     syn   uncti                                                                 tAccount> {
-  try {
-    const response = await api.post<WeCh    const respon  `/    const response = await api.post<WeCh    const respon  `/urn response.data;
-  } catch (  } catch (  } catch (  } catch (  }  update WeChat account:", error);
-    throw erro    throw erro    the a We    throw erro    throw erro    the a We    throw erro    throw erro    the a We    throw erro    throw erro    the a We    throw erro    throw erro    the a We    throw erro    throw erro    the a We    thrmute`
-    );
+export async function addWeChatAccount(input: string): Promise<unknown> {
+  const s = input.trim();
+  if (!s) {
+    throw new Error("empty input");
+  }
+  if (s.startsWith("https://mp.weixin.qq.com/s/")) {
+    const response = await api.post("/api/wechat/mps", { wxsLink: s });
     return response.data;
-  } catch (error) {
-    console.error("Failed to mute account:", error);
-    throw error;
   }
+  const response = await api.post("/api/wechat/mps/by-id", {
+    mpId: s,
+    name: s,
+  });
+  return response.data;
 }
 
-/**
- * Unmute a WeChat account
- */
-export async function unmuteAccount(subscriptionId: string): Promise<WeChatAccount> {
-  try {
-    const response = await api.post<WeChatAccount>(
-      `/api/wechat/accounts/${subscriptionId}/unmute`
-    );
-    return re    return re    return re    return re    return re    return re    return re    return re    return re    return re    return re    return re    return r/
-    re function validateWeChatAccountId(accountId: string): boolean {
-  // WeChat Official Account: MP_WXS_123456 or similar format
-  // Or just a username-like format
-  const pattern = /^[a-zA-Z0-9_-]{4,}$/;
-  return pattern.test(accountId.trim());
+export function validateWeChatAccountId(accountId: string): boolean {
+  const t = accountId.trim();
+  if (t.startsWith("https://mp.weixin.qq.com/s/")) {
+    return true;
+  }
+  return /^[a-zA-Z0-9_-]{4,}$/.test(t);
 }
 
-/**
- * ==================== WECHAT OAUTH LOGIN ====================
- * Handle WeChat QR code login
- */
+/** Remove a subscribed MP feed */
+export async function removeWeChatAccount(mpId: string): Promise<void> {
+  await api.delete(`/api/wechat/mps/${encodeURIComponent(mpId)}`);
+}
+
+/** Refresh latest articles for an MP */
+export async function updateWeChatAccount(mpId: string): Promise<unknown> {
+  const response = await api.post(
+    `/api/wechat/mps/${encodeURIComponent(mpId)}/sync`
+  );
+  return response.data;
+}
+
+/** No mute API on backend — kept for UI compatibility */
+export async function muteAccount(id: string): Promise<WeChatAccount> {
+  console.warn("muteAccount: not supported by API", id);
+  return { id, is_muted: true };
+}
+
+export async function unmuteAccount(id: string): Promise<WeChatAccount> {
+  console.warn("unmuteAccount: not supported by API", id);
+  return { id, is_muted: false };
+}
+
+// --- WeChat OAuth (dashboard / wechat_login.py) ---
 
 export interface WeChatLoginResponse {
   status: string;
   state: string;
   auth_url: string;
   expires_in: number;
-  message: string;
+  message?: string;
+  error?: string;
 }
 
 export interface WeChatOAuthCallback {
@@ -97,40 +110,40 @@ export interface WeChatOAuthCallback {
   access_token: string;
 }
 
-/**
- * Generate WeChat OAuth login QR code
- * Returns auth_url which can be rendered as QR code
- */
+export interface WeChatLoginStatusResponse {
+  status: "pending" | "completed" | "expired" | "error";
+  message?: string;
+  user?: {
+    openid: string;
+    nickname?: string;
+    avatar?: string;
+  };
+  access_token?: string;
+}
+
 export async function generateWeChatQRCode(): Promise<WeChatLoginResponse> {
-  try {
-    const response = await api.post<WeChatLoginResponse>(
-      "/api/wechat-auth/qrcode/generate"
-    );
-    return response.data;
-  } catch (error) {
-    console.error("Failed to generate WeChat QR code:", error);
-    throw error;
-  }
+  const response = await api.post<WeChatLoginResponse>(
+    "/api/wechat-auth/qrcode/generate"
+  );
+  return response.data;
 }
 
-/**
- * Poll status of WeChat login
- * Call this repeatedly while showing QR code to user
- */
-export asyncexport asyncexport asyncexport asyncexport asyncexport asyncexport asyncexport asyncex stringexport asyncexport asyncexport asyncexport asyncexport asynce   export asyncexport ast api.get(ex     `/api/wechat-auth/status?state=${statexport asyncexpoeturn response.data;
-  } catch (error)   } catch (error)or("Failed to check login s  } catch (error)   } catch (err;
-  }
+export async function checkWeChatLoginStatus(
+  state: string
+): Promise<WeChatLoginStatusResponse> {
+  const response = await api.get<WeChatLoginStatusResponse>(
+    "/api/wechat-auth/status",
+    { params: { state } }
+  );
+  return response.data;
 }
 
-/**
- * Handle OAuth callba * Handle OAutfter user redirects back from WeChat
- */
 export async function handleWeChatCallback(
   code: string,
   state: string
 ): Promise<WeChatOAuthCallback> {
-  try {
-    const response = await api.post<WeChatOAuthCallback>(
-      `/api/wechat-auth/callback?code=${code}&stat      `/api/wechat-auth/callback?code=${code}&stat      er      `/api/wechat-auth/callback?code=$dle WeCha      `/api/wechat-auth/  throw error;
-  }
+  const response = await api.post<WeChatOAuthCallback>(
+    `/api/wechat-auth/callback?${new URLSearchParams({ code, state }).toString()}`
+  );
+  return response.data;
 }

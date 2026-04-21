@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { WeChatArticle } from "../services/wechatArticleApi";
+import type { WeChatArticle } from "../services/wechatArticleApi";
 
 interface WeChatArticlesState {
   articles: WeChatArticle[];
@@ -16,6 +16,7 @@ interface WeChatArticlesState {
   selectedArticle: WeChatArticle | null;
   showDetail: boolean;
   bookmarkedIds: Set<string>;
+
   setArticles: (articles: WeChatArticle[]) => void;
   appendArticles: (articles: WeChatArticle[]) => void;
   setPage: (page: number) => void;
@@ -25,20 +26,56 @@ interface WeChatArticlesState {
   setError: (error: string | null) => void;
   setSelectedAccountId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
-  setDateRange: (startDate: string | null, e  setDateRange: (startDate: string | null, e  setDateRange: (startDate: string | null, e  setDat s  setDateRange: (startDate: stri v  setDateRange: (startDate: string | null, e  setDateRange:an)   setDateRange: (startD: () => v  setDateRange: (staruseWeCha  setDateStore =  setDateRange:rt  setDateRange:t)  setDateRange: (: [  setDateRange: (smit: 20,
+  setDateRange: (startDate: string | null, endDate: string | null) => void;
+  setSelectedArticle: (article: WeChatArticle | null) => void;
+  setShowDetail: (show: boolean) => void;
+  toggleBookmark: (id: string) => void;
+  reset: () => void;
+}
+
+const initial = {
+  articles: [] as WeChatArticle[],
+  page: 1,
+  limit: 20,
   total: 0,
-  has  has  has  has  has  has  has  erro  has  has  has  hasccountId: null,
+  hasMore: false,
+  loading: false,
+  error: null as string | null,
+  selectedAccountId: null as string | null,
   searchQuery: "",
-  startDate: null,
-  endDate: null,
-  selectedArticle: null,
+  startDate: null as string | null,
+  endDate: null as string | null,
+  selectedArticle: null as WeChatArticle | null,
   showDetail: false,
   bookmarkedIds: new Set<string>(),
+};
+
+export const useWeChatArticlesStore = create<WeChatArticlesState>((set) => ({
+  ...initial,
+
   setArticles: (articles) => set({ articles }),
-  appendArticles: (articles) =>
-    set((state) => ({ art    set((state) => ({ art    set(ic    set((state) => ({ art    set((s{     set((state) => ({ art    set((t({ tota    set((state) => ({ art    set((state)asMore }),
-  setLoading: (loading) => set({ lo  setLoading: (loading) => set({ lo  setLoading: (lse  setLoading: (loading) => set({ lo  sctedA  setLoading: (loading) => set({ lo  setLoading: (loading) => set({ lo  setLoading: (lse  setLoading: (loading) => set({ lo  sctedA  setLoading: (loading) => set({ lo  setLoading: (loading) => set({ lo  setLoading: (lse  setLoading: (loading) => set({ lo  sctedA  setLoading: (loading) => set({ lo  setLoading: (loading) => set({ lo  setLoading: (lse  setLoading: (loading) => set({ lo  sctedA  ta  setLoadi    setLoading: (loading) => set({ lo  setLoading: (loading) => set({ lo  setar  setLoading: ( els  setLoadine(articl  setLoading: (ur  setLoading: (loading)};  setLoading: (lFilte  setLoading: (loading) => set({ lAc  setLoading: (loading) => set({ lo  setLoadstar  setLoading: (loading) => setll,
-      page: 1,
-      articles: [],
+
+  appendArticles: (more) =>
+    set((state) => ({ articles: [...state.articles, ...more] })),
+
+  setPage: (page) => set({ page }),
+  setTotal: (total) => set({ total }),
+  setHasMore: (hasMore) => set({ hasMore }),
+  setLoading: (loading) => set({ loading }),
+  setError: (error) => set({ error }),
+  setSelectedAccountId: (id) => set({ selectedAccountId: id }),
+  setSearchQuery: (query) => set({ searchQuery: query }),
+  setDateRange: (startDate, endDate) => set({ startDate, endDate }),
+  setSelectedArticle: (article) => set({ selectedArticle: article }),
+  setShowDetail: (show) => set({ showDetail: show }),
+
+  toggleBookmark: (id) =>
+    set((state) => {
+      const next = new Set(state.bookmarkedIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { bookmarkedIds: next };
     }),
+
+  reset: () => set({ ...initial, bookmarkedIds: new Set<string>() }),
 }));

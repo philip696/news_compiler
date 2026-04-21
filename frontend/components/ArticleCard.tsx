@@ -30,7 +30,7 @@ type Props = {
 };
 
 const getLogoPath = (sourceId: string | undefined): string => {
-  if (!sourceId) return joinUrl("/data/logos/wired.png");
+  if (!sourceId) return joinUrl(BASE_URL, "/data/logos/wired.png");
   const normalized = sourceId.toLowerCase().trim();
   
   // Map source names to logo files in backend /data/logos directory

@@ -8,6 +8,7 @@ import { useProtectedRoute } from "../hooks/useProtectedRoute";
 import StoryClusterCard from "../components/StoryClusterCard";
 import ArticleCard from "../components/ArticleCard";
 import WeChatOfficialAccounts from "../components/WeChatOfficialAccounts";
+import WeWeRSSQRLogin from "../components/WeWeRSSQRLogin";
 import { useChatContext } from "../context/ChatContext";
 import { motion } from "framer-motion";
 import { wechatCdnImageProxyUrl } from "../utils/wechatImageProxy";

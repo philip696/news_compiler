@@ -6,8 +6,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import QRCode from 'qrcode.react';
-import { generateWeChatQRCode, checkWeChatLoginStatus } from '@/services/wechatApi';
+import { QRCodeSVG } from 'qrcode.react';
+import { generateWeChatQRCode, checkWeChatLoginStatus } from "../services/wechatApi";
 
 interface WeChatLoginQRProps {
   onLoginSuccess?: (user: any, accessToken: string) => void;
@@ -84,18 +84,21 @@ export default function WeChatLoginQR({
         const response = await checkWeChatLoginStatus(state);
 
         if (response.status === 'completed') {
+          const user = response.user;
+          const accessToken = response.access_token;
           setLoginState({
             status: 'success',
-            user: response.user,
-            accessToken: response.access_token,
+            user,
+            accessToken,
           });
           
           // Clear polling
           clearInterval(interval);
           setPollInterval(null);
 
-          // Call success callback
-          onLoginSuccess?.(response.user, response.access_token);
+          if (user && accessToken) {
+            onLoginSuccess?.(user, accessToken);
+          }
         } else if (response.status === 'expired' || response.status === 'error') {
           setLoginState({
             status: 'error',
@@ -158,7 +161,7 @@ export default function WeChatLoginQR({
         {loginState.status === 'waiting' && loginState.authUrl && (
           <div className="waiting-state">
             <div className="qr-code-container">
-              <QRCode 
+              <QRCodeSVG
                 value={loginState.authUrl}
                 size={256}
                 level="H"

@@ -9,18 +9,14 @@ export interface WeChatUser {
 }
 
 type WeChatState = {
-  // Auth state
   wechatAuthToken: string | null;
   wechatUser: WeChatUser | null;
   isWeChatLogged: boolean;
 
-  // Actions
   setWeChatToken: (token: string | null) => void;
   setWeChatUser: (user: WeChatUser | null) => void;
   clearWeChatToken: () => void;
   setWeChatAuth: (token: string, user: WeChatUser) => void;
-  
-  // Refresh
   loadWeChatFromStorage: () => void;
 };
 
@@ -36,12 +32,35 @@ export const useWeChatStore = create<WeChatState>()(
       },
 
       setWeChatUser: (user) => {
-        set({ wechatUser: user, isWeChatLogged: !!user });
-                                                                                    To                                :                                               }                            at     : () => {
-                                     en: nu                     ser: n                sWeCh              e,                                dWeChatFromStorage: () => {
-        // Called on app init to load state from localStorage
+        set({
+          wechatUser: user,
+          isWeChatLogged: !!user && !!get().wechatAuthToken,
+        });
+      },
+
+      clearWeChatToken: () => {
+        set({
+          wechatAuthToken: null,
+          wechatUser: null,
+          isWeChatLogged: false,
+        });
+      },
+
+      setWeChatAuth: (token, user) => {
+        set({
+          wechatAuthToken: token,
+          wechatUser: user,
+          isWeChatLogged: true,
+        });
+      },
+
+      loadWeChatFromStorage: () => {
         const state = get();
         set({
           isWeChatLogged: !!state.wechatAuthToken && !!state.wechatUser,
-                                                              ",
-            
+        });
+      },
+    }),
+    { name: "wechat-auth-storage" }
+  )
+);
