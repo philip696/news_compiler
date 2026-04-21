@@ -65,6 +65,42 @@ class MpAddBody(BaseModel):
     url: Optional[str] = None
 
 
+# Zero-width / control characters that frequently sneak in from chat apps
+# (WeChat "Copy link" on iOS, Telegram, Slack, etc.). These pass `.strip()`
+# but break a plain `str.startswith` / regex check.
+_INVISIBLE_CHARS = (
+    "\u200b"  # zero-width space
+    "\u200c"  # zero-width non-joiner
+    "\u200d"  # zero-width joiner
+    "\u200e"  # LTR mark
+    "\u200f"  # RTL mark
+    "\ufeff"  # BOM
+    "\u202a\u202b\u202c\u202d\u202e"  # bidi overrides
+    "\xa0"    # non-breaking space
+)
+
+
+def _clean_wxs_link(raw: Optional[str]) -> str:
+    """Normalize a pasted WeChat share URL.
+
+    - strip whitespace
+    - remove zero-width / bidi / BOM characters
+    - strip wrapping quotes, backticks, angle brackets
+    - trim trailing punctuation like ')', ']', ','
+    """
+    if not raw:
+        return ""
+    s = raw.strip()
+    for ch in _INVISIBLE_CHARS:
+        s = s.replace(ch, "")
+    # Strip one layer of wrapping quotes / brackets
+    while s and s[0] in "\"'`<([":
+        s = s[1:].lstrip()
+    while s and s[-1] in "\"'`>)],.;":
+        s = s[:-1].rstrip()
+    return s
+
+
 class MpByIdBody(BaseModel):
     mpId: Optional[str] = None
     id: Optional[str] = None
@@ -428,11 +464,16 @@ async def add_mp(
 ):
     svc = _svc(request)
     user_id = int(current_user["sub"])
-    wxs_link = (body.wxsLink or body.url or "").strip()
+    raw_link = body.wxsLink or body.url or ""
+    wxs_link = _clean_wxs_link(raw_link)
     if not re.match(r"^https://mp\.weixin\.qq\.com/s/", wxs_link):
         return JSONResponse(
             status_code=400,
-            content={"error": "wxsLink must start with https://mp.weixin.qq.com/s/"},
+            content={
+                "error": "wxsLink must start with https://mp.weixin.qq.com/s/",
+                "received": raw_link[:200],
+                "normalized": wxs_link[:200],
+            },
         )
     try:
         resolved = await svc.get_mp_info(db, user_id, wxs_link)
@@ -633,11 +674,16 @@ async def resolve_share(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    wxs_link = (body.wxsLink or body.url or "").strip()
+    raw_link = body.wxsLink or body.url or ""
+    wxs_link = _clean_wxs_link(raw_link)
     if not re.match(r"^https://mp\.weixin\.qq\.com/s/", wxs_link):
         return JSONResponse(
             status_code=400,
-            content={"error": "wxsLink must start with https://mp.weixin.qq.com/s/"},
+            content={
+                "error": "wxsLink must start with https://mp.weixin.qq.com/s/",
+                "received": raw_link[:200],
+                "normalized": wxs_link[:200],
+            },
         )
     return await _resolve_biz_from_share_url(wxs_link, _http(request))
 

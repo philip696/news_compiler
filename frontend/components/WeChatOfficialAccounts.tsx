@@ -155,9 +155,15 @@ export default function WeChatOfficialAccounts({ onLogin }: { onLogin?: () => vo
   // ── Add Official Account via share URL ──────────────────────────────── //
   const addFeedMutation = useMutation({
     mutationFn: async (wxsLink: string) => {
+      const cleaned = wxsLink
+        .trim()
+        // strip zero-width / BOM / bidi / nbsp chars that sneak in from chat apps
+        .replace(/[\u200B-\u200F\u202A-\u202E\uFEFF\u00A0]/g, '')
+        // strip one layer of wrapping quotes / brackets
+        .replace(/^["'`<([]+|["'`>)\],.;]+$/g, '');
       const res = await axios.post(
         `${API_BASE}/api/wechat/mps`,
-        { wxsLink },
+        { wxsLink: cleaned },
         { headers: authHeaders() }
       );
       return res.data;
