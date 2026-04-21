@@ -35,6 +35,12 @@ DATABASE_URL=postgresql://postgres.[PROJECT-REF]:[YOUR-PASSWORD]@aws-0-[REGION].
 # Or the "Transaction" / direct host URL from the dashboard
 ```
 
+### Railway / Docker and Supabase (IPv6)
+
+If logs show `connection to server at "db....supabase.co" (...IPv6...) failed: Network is unreachable`, the host has no IPv6 route to Supabase. This app **defaults to forcing IPv4** for `postgresql://…@db.*.supabase.co:5432/…` URLs (see `app/db/database.py`). Set `DATABASE_IPV4_ONLY=false` only if you must use default DNS.
+
+Alternatives: use Supabase **pooler** (port **6543**) in `DATABASE_URL`, or set **`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`** so runtime auth uses HTTPS PostgREST instead of direct Postgres.
+
 ### Unified schema (one database)
 
 The backend already uses **one** Postgres database for everything: auth (`users`), engagement (`bookmarks`, `likes`), and WeChat / WeRead (`weread_accounts`, `weread_feeds`, `weread_articles`). There is no separate “WeChat database” in code—only `DATABASE_URL`.

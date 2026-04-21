@@ -17,6 +17,18 @@ db_dir.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{db_dir}/geb.db")
 
 
+def _use_ipv4_hostaddr_for_postgres() -> bool:
+    """Prefer IPv4 libpq hostaddr for hosts that often resolve AAAA-first (unreachable on Railway etc.)."""
+    flag = os.getenv("DATABASE_IPV4_ONLY", "").strip().lower()
+    if flag in ("0", "false", "no"):
+        return False
+    if flag in ("1", "true", "yes"):
+        return True
+    # Auto: Supabase direct DB URLs (db.<ref>.supabase.co) → IPv6-first DNS breaks many PaaS egress.
+    u = DATABASE_URL.lower()
+    return "postgresql" in u and "db." in u and ".supabase.co" in u
+
+
 def _postgres_ipv4_connect_args(database_url: str) -> dict:
     """Resolve DB hostname to IPv4 for libpq `hostaddr`.
 
@@ -49,17 +61,18 @@ elif "postgresql" in DATABASE_URL:
     engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "20"))
     engine_kwargs["pool_pre_ping"] = True  # Test connections before using
     engine_kwargs["echo"] = os.getenv("SQL_ECHO", "false").lower() == "true"
-    if os.getenv("DATABASE_IPV4_ONLY", "").lower() in ("1", "true", "yes"):
+    if _use_ipv4_hostaddr_for_postgres():
         try:
             engine_kwargs["connect_args"] = _postgres_ipv4_connect_args(DATABASE_URL)
             logger.info(
-                "DATABASE_IPV4_ONLY: connecting via IPv4 hostaddr for %s",
+                "PostgreSQL: using IPv4 hostaddr for %s (set DATABASE_IPV4_ONLY=false to disable)",
                 make_url(DATABASE_URL).host,
             )
         except OSError as e:
             logger.warning(
-                "DATABASE_IPV4_ONLY set but IPv4 resolve failed (%s); "
-                "using default DNS (set DATABASE_IPV4_ONLY=0 or fix DNS).",
+                "IPv4 hostaddr resolve failed (%s); using default DNS. "
+                "If deploy fails with IPv6 unreachable, set DATABASE_IPV4_ONLY=true after fixing DNS, "
+                "or use Supabase pooler (port 6543) / SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY.",
                 e,
             )
 
