@@ -71,7 +71,36 @@ export default function ArticlePage() {
   const { id } = router.query;
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const { setPageContext, clearPageContext, setQuickPrompt } = useChatContext();
+
+  useEffect(() => {
+    if (!linkCopied) return;
+    const t = window.setTimeout(() => setLinkCopied(false), 2500);
+    return () => window.clearTimeout(t);
+  }, [linkCopied]);
+
+  const handleShareArticle = async () => {
+    if (typeof window === "undefined") return;
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } finally {
+        document.body.removeChild(ta);
+      }
+    }
+    setLinkCopied(true);
+  };
 
   // Fetch article data from backend with like/bookmark status
   const { data: article, isLoading, error } = useQuery<Article>({
@@ -193,6 +222,15 @@ export default function ArticlePage() {
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] relative overflow-hidden font-sans text-slate-800">
+      {linkCopied && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg"
+        >
+          Link Copied
+        </div>
+      )}
       {/* Abstract background */}
       <div className="absolute inset-0 z-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, #94a3b8 1px, transparent 0)', backgroundSize: '32px 32px' }}></div>
 
@@ -233,7 +271,7 @@ export default function ArticlePage() {
                   }}
                 />
               </div>
-              <div>
+              <div className="relative">
                 <p className="font-semibold text-slate-900">{article.source_name}</p>
                 <p className="text-sm text-slate-500">
                   {new Date(article.published_at).toLocaleDateString('en-US', {
@@ -409,6 +447,8 @@ export default function ArticlePage() {
                 Back to Feed
               </button>
               <button
+                type="button"
+                onClick={() => void handleShareArticle()}
                 className="flex-1 rounded-lg bg-slate-100 hover:bg-slate-200 px-6 py-3 font-medium text-slate-700 transition-colors"
               >
                 Share Article

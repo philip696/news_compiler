@@ -676,6 +676,9 @@ export default function HomePage() {
                       <p className="text-sm text-slate-500 mt-1">
                         {wereadArticles.length} articles from {wereadFeeds.length} official accounts
                       </p>
+                      <p className="text-xs text-slate-400 mt-2 max-w-2xl leading-relaxed">
+                        <span className="font-medium text-slate-500">Steps:</span> Login in Sidebar → Add Official Account → Sync → View Articles
+                      </p>
                     </div>
                     {/* Per-feed filter pills */}
                     {wereadFeeds.length > 0 && (

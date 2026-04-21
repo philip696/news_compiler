@@ -161,6 +161,9 @@ export default function WeChatFeedPage() {
           <p className="text-sm text-slate-500 mt-1">
             {mpId} · {articles.length} articles
           </p>
+          <p className="text-xs text-slate-400 mt-2 max-w-2xl leading-relaxed">
+            <span className="font-medium text-slate-500">Steps:</span> Login in Sidebar → Add Official Account → Sync → View Articles
+          </p>
         </div>
         <button onClick={() => router.back()} className="text-slate-600 hover:text-slate-900 font-medium">
           ← Back
