@@ -24,8 +24,9 @@ from .api.chatbot import router as chatbot_router
 from .api.wechat import router as wechat_router
 from .services.weread_service import WeReadService, DEFAULT_PLATFORM_URL
 
-# Create tables for SQLAlchemy/SQLite local runs only (Supabase: use SQL editor or Alembic).
-if not use_supabase_runtime():
+# Create tables for SQLite local dev only. PostgreSQL: use `alembic upgrade head`.
+# Supabase REST runtime: schema via dashboard / migrations (no eager SQLAlchemy connect here).
+if not use_supabase_runtime() and "sqlite" in str(engine.url).lower():
     Base.metadata.create_all(bind=engine)
 
 
