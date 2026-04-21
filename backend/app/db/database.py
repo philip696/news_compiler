@@ -37,6 +37,9 @@ def _postgres_ipv4_connect_args(database_url: str) -> dict:
 
     libpq uses `hostaddr` for the TCP target but still uses `host` for TLS
     verification and GSS, so this is safe for sslmode=require.
+
+    Supabase expects SSL; pool/direct URLs sometimes omit sslmode in the URI.
+    Passing port/sslmode/connect_timeout explicitly avoids ambiguous merges with SQLAlchemy's URL → psycopg2.
     """
     parsed = make_url(database_url)
     if not parsed.host:
@@ -46,7 +49,20 @@ def _postgres_ipv4_connect_args(database_url: str) -> dict:
         parsed.host, port, socket.AF_INET, socket.SOCK_STREAM
     )
     ipv4 = infos[0][4][0]
-    return {"host": parsed.host, "hostaddr": ipv4}
+    query = dict(parsed.query)
+    sslmode = query.get("sslmode")
+    if not sslmode and "supabase" in parsed.host.lower():
+        sslmode = "require"
+    if not sslmode:
+        sslmode = "prefer"
+    connect_timeout = int(os.getenv("PGCONNECT_TIMEOUT", "15"))
+    return {
+        "host": parsed.host,
+        "hostaddr": ipv4,
+        "port": port,
+        "sslmode": sslmode,
+        "connect_timeout": connect_timeout,
+    }
 
 
 # Engine configuration based on database type

@@ -39,7 +39,7 @@ DATABASE_URL=postgresql://postgres.[PROJECT-REF]:[YOUR-PASSWORD]@aws-0-[REGION].
 
 If logs show `connection to server at "db....supabase.co" (...IPv6...) failed: Network is unreachable`, the host has no IPv6 route to Supabase. This app **defaults to forcing IPv4** for `postgresql://…@db.*.supabase.co:5432/…` URLs (see `app/db/database.py`). Set `DATABASE_IPV4_ONLY=false` only if you must use default DNS.
 
-Alternatives: use Supabase **pooler** (port **6543**) in `DATABASE_URL`, or set **`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`** so runtime auth uses HTTPS PostgREST instead of direct Postgres.
+Alternatives: use Supabase **pooler** (port **6543**) in `DATABASE_URL`, or set **`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`** on the host so the app uses **PostgREST over HTTPS** for users/bookmarks/likes/WeRead (no direct Postgres socket from Railway at all — most reliable for login).
 
 ### Unified schema (one database)
 
