@@ -59,7 +59,8 @@ If you previously created `wechat_official_accounts` / `wechat_cached_articles`,
 |----------|---------|
 | `DATABASE_URL` | PostgreSQL connection string (Supabase) |
 | `SECRET_KEY` | JWT signing secret (use a long random string in production) |
-| `FRONTEND_URL` | Your frontend origin (CORS); e.g. `http://localhost:3000` |
+| `FRONTEND_URL` | Your frontend origin (CORS), no trailing slash; e.g. `https://news-compiler.vercel.app` |
+| `CORS_ORIGINS` | Optional extra allowed origins, comma-separated (e.g. preview URLs) |
 | `PLATFORM_URL` | WeRead-compatible gateway (default in `.env.example`) |
 | `UPDATE_DELAY_TIME` | Seconds between history pages when syncing (default `60`) |
 | `UPDATE_DELAY_MS` | Optional: override delay in milliseconds (dev only) |

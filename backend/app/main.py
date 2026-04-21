@@ -86,14 +86,23 @@ allowed_origins = [
     "http://localhost:8000",
     "http://127.0.0.1:8080",  # Alternative frontend ports
     "http://localhost:8080",
-    "https://newscompiler-production.vercel.app",  # Production Vercel
+    "https://newscompiler-production.vercel.app",
+    "https://news-compiler.vercel.app",  # Vercel default project URL (hyphenated)
 ]
 
 # Add any env-configured URL
 if frontend_url := os.getenv("FRONTEND_URL"):
-    allowed_origins.append(frontend_url)
+    allowed_origins.append(frontend_url.rstrip("/"))
+# Railway / CI sometimes set multiple frontends
+for raw in (os.getenv("CORS_ORIGINS") or "").split(","):
+    u = raw.strip().rstrip("/")
+    if u:
+        allowed_origins.append(u)
 if vercel_url := os.getenv("VERCEL_URL"):
-    allowed_origins.append(f"https://{vercel_url}")
+    allowed_origins.append(f"https://{vercel_url}".rstrip("/"))
+
+# Deduplicate while preserving order
+allowed_origins = list(dict.fromkeys(allowed_origins))
 
 # Configure CORS middleware - MUST be first middleware added
 app.add_middleware(
