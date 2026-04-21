@@ -5,7 +5,10 @@ __pycache__/
 *.swp
 .DS_Store
 .env
-*.db
+.env.local
 backend/.venv/
+backend/data/*.db
 frontend/node_modules/
 frontend/.next/
+test/node_modules/
+wewe-rss copy/

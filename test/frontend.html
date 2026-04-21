@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WeWe-RSS Test Frontend</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; margin: 2em auto; max-width: 960px; padding: 0 1em; }
+    h1 { margin-bottom: .2em; }
+    h2 { margin-top: 1.6em; border-bottom: 1px solid #ccc4; padding-bottom: .2em; }
+    button { padding: .45em .9em; margin-right: .4em; cursor: pointer; }
+    input[type=text] { padding: .45em .6em; width: 520px; max-width: 100%; }
+    .hidden { display: none; }
+    .mps, .articles { list-style: none; padding: 0; }
+    .mps li, .articles li { padding: .6em .8em; border: 1px solid #8883; border-radius: 6px; margin-bottom: .5em; }
+    .mps li { display: flex; align-items: center; gap: .8em; }
+    .mps img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; background: #0001; }
+    .mps .meta { flex: 1; min-width: 0; }
+    .mps .meta b { display: block; }
+    .mps .meta small { color: #666; }
+    .articles li a { text-decoration: none; color: inherit; }
+    .articles li b { display: block; }
+    .articles li small { color: #666; }
+    .debug { background: #0001; padding: .8em; border-radius: 6px; margin-top: 1em; font-size: .85em; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+    .row { display: flex; align-items: center; gap: .4em; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <h1>WeWe-RSS Test Frontend</h1>
+  <p>Login with WeChat, paste an article link, and sync its official-account history.</p>
+
+  <!-- Step 1: login -->
+  <section id="login-section">
+    <h2>1. Login</h2>
+    <p style="margin-top:.2em;color:#555;font-size:.9em;">
+      The upstream gateway rotates requests across a <b>pool</b> of accounts.
+      Adding 2–3 WeChat accounts massively reduces
+      <code>WeReadError400</code> failures.
+    </p>
+  <button id="get-qr">Get WeChat Login QR</button>
+    <button id="add-account" class="hidden">Add another account</button>
+    <div id="qr-section" class="hidden">
+      <p>Scan with WeChat to authorize:</p>
+    <div id="qr-img"></div>
+      <p id="qr-status">Waiting for scan…</p>
+    </div>
+    <div id="accounts-box" class="hidden" style="margin-top:.8em;">
+      <b>Account pool</b>
+      <ul id="accounts-list" style="list-style:none;padding:0;margin:.4em 0;"></ul>
+      <button id="clear-block" style="font-size:.85em;">Clear today's block list</button>
+    </div>
+  </section>
+
+  <!-- Step 2: add official account via link -->
+  <section id="mp-section" class="hidden">
+    <h2>2. Add an official account</h2>
+    <p>Paste any article URL from the official account you want to follow
+       (format: <code>https://mp.weixin.qq.com/s/...</code>). Recently-opened
+       links resolve best — old/cached ones may hit the gateway's anti-bot
+       wall and come back with a <code>MP_WXS_*</code> placeholder id.</p>
+    <div class="row">
+      <input id="wxs-link" type="text" placeholder="https://mp.weixin.qq.com/s/avBcaX3MgEkNGo64dZaJZA" />
+      <button id="add-mp">Add &amp; fetch history</button>
+    </div>
+    <details style="margin-top: .8em;">
+      <summary>Or add by known official-account ID</summary>
+      <div class="row" style="margin-top: .5em;">
+        <input id="manual-mp-id" type="text" placeholder="biz id (e.g. MzI0NDg2NzEzMQ==)" />
+        <input id="manual-mp-name" type="text" placeholder="display name (optional)" />
+        <button id="add-mp-manual">Add</button>
+      </div>
+    </details>
+    <div id="add-warnings"></div>
+  </section>
+
+  <!-- Step 3: list of mps -->
+  <section id="mps-list-section" class="hidden">
+    <h2>3. Your official accounts</h2>
+    <div class="row">
+      <button id="sync-all">Sync all</button>
+      <button id="reload-mps">Reload list</button>
+  </div>
+    <ul id="mps" class="mps"></ul>
+  </section>
+
+  <!-- Step 4: articles of selected mp -->
+  <section id="articles-section" class="hidden">
+    <h2 id="articles-title">Articles</h2>
+    <ul id="articles" class="articles"></ul>
+  </section>
+
+  <div class="debug" id="debug"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script>
+    const state = { uuid: null, xid: null, token: null, selectedMp: null };
+    const debugEl = document.getElementById('debug');
+    function debug(msg, obj) {
+      debugEl.textContent += '\n' + msg + (obj !== undefined ? '\n' + JSON.stringify(obj, null, 2) : '');
+      debugEl.scrollTop = debugEl.scrollHeight;
+    }
+    function authHeaders() {
+      return { xid: state.xid, token: state.token };
+    }
+    async function api(path, opts = {}) {
+      const headers = { 'Content-Type': 'application/json', ...authHeaders(), ...(opts.headers || {}) };
+      const res = await fetch(path, { ...opts, headers });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+      if (!res.ok) {
+        debug(`HTTP ${res.status} ${path}`, data);
+        // Prefer human-readable `message` over the short `error` code so the
+        // pool-exhausted CTA reaches the UI.
+        const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+        const err = new Error(msg);
+        err.body = data;
+        throw err;
+      }
+      return data;
+    }
+    function fmtTime(ts) {
+      if (!ts) return '';
+      const ms = ts < 1e12 ? ts * 1000 : ts;
+      return new Date(ms).toLocaleString();
+    }
+
+    // ---- Step 1: login -------------------------------------------------
+    async function startQr() {
+      debug('Requesting QR…');
+      const data = await api('/api/wechat-qr');
+      state.uuid = data.uuid;
+      const qrDiv = document.getElementById('qr-img');
+      qrDiv.innerHTML = '';
+      new QRCode(qrDiv, { text: data.scanUrl, width: 220, height: 220 });
+      document.getElementById('qr-section').classList.remove('hidden');
+      debug('QR received', data);
+      pollLogin();
+    }
+    document.getElementById('get-qr').onclick = startQr;
+    document.getElementById('add-account').onclick = startQr;
+
+    async function pollLogin() {
+      for (let i = 0; i < 120; i++) {
+        try {
+          const data = await api('/api/wechat-login-status?uuid=' + encodeURIComponent(state.uuid));
+        document.getElementById('qr-status').innerText = data.message;
+          if (data.message === 'success' && data.token && data.vid) {
+            // Primary session: save first login's token as the client's auth
+            // bearer. Subsequent logins grow the server-side pool without
+            // replacing our credentials.
+            if (!state.xid) {
+              state.xid = String(data.vid);
+              state.token = data.token;
+              debug('Login success', { vid: data.vid, username: data.username });
+              document.getElementById('mp-section').classList.remove('hidden');
+              document.getElementById('mps-list-section').classList.remove('hidden');
+              await loadMps();
+            } else {
+              debug('Additional account added to pool', { vid: data.vid, username: data.username });
+            }
+            document.getElementById('get-qr').classList.add('hidden');
+            document.getElementById('add-account').classList.remove('hidden');
+            document.getElementById('accounts-box').classList.remove('hidden');
+            document.getElementById('qr-section').classList.add('hidden');
+            await loadAccounts();
+            return;
+          }
+          if (data.message === 'error') {
+            debug('Login error', data);
+            return;
+          }
+        } catch (err) {
+          debug('poll error', { message: err.message });
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+
+    async function loadAccounts() {
+      try {
+        const accs = await api('/api/wechat-accounts');
+        const ul = document.getElementById('accounts-list');
+        ul.innerHTML = '';
+        for (const a of accs) {
+          const li = document.createElement('li');
+          const badge = a.blockedToday
+            ? '<span style="color:#c33;font-size:.8em;margin-left:.4em;">blocked today</span>'
+            : '<span style="color:#090;font-size:.8em;margin-left:.4em;">ok</span>';
+          li.innerHTML = `<code>${a.id}</code> ${a.name || ''} ${badge}`;
+          ul.append(li);
+        }
+        if (accs.length === 0) ul.innerHTML = '<li><em>No accounts yet.</em></li>';
+      } catch {}
+    }
+    document.getElementById('clear-block').onclick = async () => {
+      await api('/api/wechat-accounts/clear-block', { method: 'POST' });
+      debug('Cleared today\'s block list');
+      await loadAccounts();
+    };
+
+    // ---- Step 2: add mp ------------------------------------------------
+    function renderWarnings(warnings) {
+      const holder = document.getElementById('add-warnings');
+      holder.innerHTML = '';
+      if (!warnings || warnings.length === 0) return;
+      for (const w of warnings) {
+        const div = document.createElement('div');
+        div.style.cssText = 'margin-top:.6em;padding:.6em .8em;background:#ffd5;border:1px solid #fc06;border-radius:6px;';
+        div.innerHTML = `<b>Warning for ${w.mpId}:</b> ${w.message}`;
+        holder.append(div);
+      }
+    }
+    document.getElementById('add-mp').onclick = async () => {
+      const wxsLink = document.getElementById('wxs-link').value.trim();
+      if (!wxsLink) return;
+      debug('Resolving mp from link…', { wxsLink });
+      try {
+        const data = await api('/api/mps', {
+          method: 'POST',
+          body: JSON.stringify({ wxsLink }),
+        });
+        debug('Resolved feeds', data.feeds);
+        renderWarnings(data.warnings);
+        await loadMps();
+      } catch (err) {
+        debug('add-mp failed', { message: err.message });
+      }
+    };
+    document.getElementById('add-mp-manual').onclick = async () => {
+      const mpId = document.getElementById('manual-mp-id').value.trim();
+      const name = document.getElementById('manual-mp-name').value.trim();
+      if (!mpId) return;
+      try {
+        const feed = await api('/api/mps/by-id', {
+          method: 'POST',
+          body: JSON.stringify({ mpId, name }),
+        });
+        debug('Added by id', feed);
+        renderWarnings([]);
+        await loadMps();
+      } catch (err) {
+        debug('add-by-id failed', { message: err.message });
+      }
+    };
+
+    // ---- Step 3: list mps ---------------------------------------------
+    async function loadMps() {
+      const mps = await api('/api/mps');
+      const ul = document.getElementById('mps');
+      ul.innerHTML = '';
+      for (const mp of mps) {
+        const li = document.createElement('li');
+        const img = document.createElement('img');
+        img.src = mp.mpCover || '';
+        img.alt = '';
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.innerHTML =
+          `<b>${mp.mpName || mp.id}</b>` +
+          `<small>${mp.mpIntro || ''}</small><br>` +
+          `<small>id=${mp.id} · articles=${mp.articleCount} · lastSync=${fmtTime(mp.syncTime)}</small>`;
+        const viewBtn = document.createElement('button');
+        viewBtn.textContent = 'View articles';
+        viewBtn.onclick = () => showArticles(mp);
+        const errorSpan = document.createElement('div');
+        errorSpan.style.cssText = 'flex-basis:100%;color:#c33;font-size:.85em;';
+        async function runSync(history) {
+          const btn = history ? histBtn : syncBtn;
+          btn.disabled = true;
+          const original = btn.textContent;
+          btn.textContent = history ? 'Fetching…' : 'Syncing…';
+          errorSpan.textContent = '';
+          try {
+            const qs = history ? '?history=1' : '';
+            await api(`/api/mps/${encodeURIComponent(mp.id)}/sync${qs}`, { method: 'POST' });
+            await loadMps();
+            await loadAccounts();
+            if (state.selectedMp === mp.id) await showArticles(mp);
+          } catch (err) {
+            errorSpan.textContent = err.message;
+            debug(history ? 'history failed' : 'sync failed', { id: mp.id, message: err.message });
+          } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+          }
+        }
+        const syncBtn = document.createElement('button');
+        syncBtn.textContent = 'Sync';
+        syncBtn.onclick = () => runSync(false);
+        const histBtn = document.createElement('button');
+        histBtn.textContent = 'Full history';
+        histBtn.onclick = () => runSync(true);
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Remove';
+        delBtn.onclick = async () => {
+          if (!confirm(`Remove ${mp.mpName || mp.id}?`)) return;
+          try {
+            await api(`/api/mps/${encodeURIComponent(mp.id)}`, { method: 'DELETE' });
+            await loadMps();
+          } catch (err) {
+            errorSpan.textContent = err.message;
+          }
+        };
+        li.append(img, meta, viewBtn, syncBtn, histBtn, delBtn, errorSpan);
+        ul.append(li);
+      }
+    }
+
+    document.getElementById('reload-mps').onclick = loadMps;
+    document.getElementById('sync-all').onclick = async () => {
+      debug('Sync all…');
+      try {
+        await api('/api/mps/sync-all', { method: 'POST' });
+        await loadMps();
+      } catch (err) {
+        debug('sync-all failed', { message: err.message });
+      }
+    };
+
+    // ---- Step 4: list articles ----------------------------------------
+    async function showArticles(mp) {
+      state.selectedMp = mp.id;
+      document.getElementById('articles-section').classList.remove('hidden');
+      document.getElementById('articles-title').textContent = `Articles — ${mp.mpName || mp.id}`;
+      const list = await api('/api/articles?mpId=' + encodeURIComponent(mp.id));
+      const ul = document.getElementById('articles');
+      ul.innerHTML = '';
+      if (list.length === 0) {
+        ul.innerHTML = '<li><em>No articles yet. Try Sync or Full history.</em></li>';
+        return;
+      }
+      for (const a of list) {
+        const li = document.createElement('li');
+        const link = a.url || `https://mp.weixin.qq.com/s/${a.id}`;
+        li.innerHTML =
+          `<a href="${link}" target="_blank" rel="noopener">` +
+          `<b>${a.title || 'Untitled'}</b>` +
+          `<small>${fmtTime(a.publishTime)}</small>` +
+          `</a>`;
+        ul.append(li);
+      }
+    }
+  </script>
+</body>
+</html>

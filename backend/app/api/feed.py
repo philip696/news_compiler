@@ -12,6 +12,31 @@ from ..services.news_service import get_news_service
 
 router = APIRouter(prefix="/api/feed", tags=["feed"])
 
+def _fallback_story_feed(limit: int) -> list[dict]:
+    """Build a basic feed when clustering/ranking data is temporarily unavailable."""
+    if not state.articles:
+        return []
+    recent_articles = sorted(
+        state.articles.values(),
+        key=lambda article: article.get("published_at"),
+        reverse=True,
+    )[:limit]
+    stories = []
+    for article in recent_articles:
+        stories.append(
+            {
+                "cluster_id": f"fallback_{article['id']}",
+                "topic": article.get("topic", "general"),
+                "headline": article.get("title", "Untitled"),
+                "summary": article.get("content", "")[:160],
+                "article_count": 1,
+                "sources": [article.get("source_name", "unknown")],
+                "score": 0.0,
+                "articles": [article],
+            }
+        )
+    return stories
+
 
 @router.get("", response_model=FeedResponse)
 def get_feed(
@@ -21,6 +46,10 @@ def get_feed(
 ):
     """Get personalized feed with pagination support."""
     all_stories = rank_feed_for_user(current_user["id"])
+    if not all_stories:
+        # Ranking can be empty if clustering has not finished yet; return
+        # a recency-based feed so the home page is never blank.
+        all_stories = _fallback_story_feed(limit=max(limit + skip, 50))
     
     # Paginate results
     paginated_stories = all_stories[skip : skip + limit]
@@ -49,23 +78,20 @@ async def get_category_articles(
     if category_name not in state.available_categories and category_name not in state.explore_categories:
         raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found")
     
-    # Get articles from state (loaded during startup)
-    articles = state.articles_by_category.get(category_name, [])
-    
-    if not articles:
-        # Try explore categories
-        articles = state.articles_explore_by_category.get(category_name, [])
-    
-    if not articles:
-        return {
-            "category": category_name,
-            "articles": [],
-            "total": 0,
-        }
-    
-    # Return up to limit articles
-    selected_articles = articles[:limit] if limit else articles
-    
+    category_articles = state.articles_by_category.get(category_name, [])
+
+    if not category_articles:
+        raise HTTPException(status_code=404, detail=f"No articles found for category '{category_name}'")
+
+    # WebHose articles first, Kaggle articles last
+    webhose = [a for a in category_articles if a["id"].startswith("webhose_")]
+    kaggle  = [a for a in category_articles if not a["id"].startswith("webhose_")]
+
+    web_sel    = webhose[:min(limit, len(webhose))]
+    remain     = limit - len(web_sel)
+    kaggle_sel = random.sample(kaggle, min(remain, len(kaggle))) if remain > 0 else []
+    selected   = web_sel + kaggle_sel
+
     return {
         "category": category_name,
         "articles": selected_articles,
@@ -103,6 +129,37 @@ def get_article(
     return article
 
 
+def _article_to_cluster(article: dict) -> dict:
+    """Wrap a flat article dict in a StoryClusterOut-compatible structure."""
+    published_at = article.get("published_at")
+    if hasattr(published_at, "isoformat"):
+        published_at = published_at.isoformat()
+    return {
+        "cluster_id": article["id"],
+        "topic": article.get("topic", "general"),
+        "headline": article.get("title", ""),
+        "summary": article.get("content", "")[:300],
+        "article_count": 1,
+        "sources": [article.get("source_name", "")],
+        "score": float(article.get("topic_confidence", 0.5)),
+        "articles": [
+            {
+                "id": article["id"],
+                "title": article.get("title", ""),
+                "content": article.get("content", ""),
+                "url": article.get("url", ""),
+                "source_id": article.get("source_id", ""),
+                "source_name": article.get("source_name", ""),
+                "published_at": published_at,
+                "topic": article.get("topic", "general"),
+                "topic_confidence": float(article.get("topic_confidence", 0.5)),
+                "logo_url": article.get("logo_url", ""),
+                "main_image": article.get("main_image", ""),
+            }
+        ],
+    }
+
+
 @router.get("/explore", response_model=FeedResponse)
 def get_explore_feed(
     current_user: dict = Depends(get_current_user),
@@ -111,18 +168,39 @@ def get_explore_feed(
 ):
     """Get explore feed with articles from Kaggle dataset."""
     all_articles = list(state.articles_explore.values())
-    
-    # Simple shuffle for variety
+
     random.shuffle(all_articles)
-    
-    paginated_stories = all_articles[skip : skip + limit]
-    
+
+    page = all_articles[skip : skip + limit]
+    stories = [_article_to_cluster(a) for a in page]
+
     return {
-        "stories": paginated_stories,
+        "stories": stories,
         "total": len(all_articles),
         "skip": skip,
         "limit": limit,
     }
+
+
+@router.get("/search", response_model=FeedResponse)
+def search_articles(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(40, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Full-text search across all articles (title + content)."""
+    q_lower = q.strip().lower()
+    # WebHose articles first (id starts with "webhose_"), then Kaggle (UUID)
+    webhose = [a for a in state.articles.values() if a["id"].startswith("webhose_")]
+    kaggle = [a for a in state.articles.values() if not a["id"].startswith("webhose_")]
+
+    def matches(a: dict) -> bool:
+        return q_lower in a.get("title", "").lower() or q_lower in a.get("content", "").lower()
+
+    results = [a for a in webhose if matches(a)] + [a for a in kaggle if matches(a)]
+    results = results[:limit]
+    stories = [_article_to_cluster(a) for a in results]
+    return {"stories": stories, "total": len(stories), "skip": 0, "limit": limit}
 
 
 @router.get("/explore/categories")
@@ -133,7 +211,7 @@ def get_explore_categories(current_user: dict = Depends(get_current_user)):
     return {"categories": sorted(categories)}
 
 
-@router.get("/explore/category/{category_name}", response_model=dict)
+@router.get("/explore/category/{category_name}", response_model=FeedResponse)
 def get_explore_category_articles(
     category_name: str,
     current_user: dict = Depends(get_current_user),
@@ -142,21 +220,18 @@ def get_explore_category_articles(
     """Get articles from a specific explore category."""
     if category_name not in state.explore_categories:
         raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found in explore feed")
-    
+
     category_articles = state.articles_explore_by_category.get(category_name, [])
-    
+
     if not category_articles:
         raise HTTPException(status_code=404, detail=f"No articles found for category '{category_name}'")
-    
-    # Select random articles up to limit
+
     selected = random.sample(category_articles, min(limit, len(category_articles)))
-    
-    # Load them into the explore articles dict temporarily
-    for article in selected:
-        state.articles_explore[article["id"]] = article
-    
+    stories = [_article_to_cluster(a) for a in selected]
+
     return {
-        "category": category_name,
-        "articles": selected,
-        "total": len(selected),
+        "stories": stories,
+        "total": len(stories),
+        "skip": 0,
+        "limit": limit,
     }

@@ -1,171 +1,93 @@
-"""Resilient startup handler with comprehensive logging."""
+"""Startup handler — loads data into in-memory state on server boot."""
 
+import logging
 import sys
-import os
-from pathlib import Path
 import time
 
+logger = logging.getLogger("uvicorn.error")
 
-def setup_startup_logging():
-    """Configure logging for startup diagnostics."""
-    log_file = Path("/tmp/geb_startup.log")
-    
-    class DualWriter:
-        """Write to both stdout and a log file."""
-        def __init__(self, stdout, logfile):
-            self.stdout = stdout
-            self.logfile = logfile
-        
-        def write(self, msg):
-            self.stdout.write(msg)
-            try:
-                with open(self.logfile, "a") as f:
-                    f.write(msg)
-            except:
-                pass
-        
-        def flush(self):
-            self.stdout.flush()
-    
-    sys.stdout = DualWriter(sys.stdout, log_file)
-    sys.stderr = DualWriter(sys.stderr, log_file)
-    
-    print(f"\n{'='*60}")
-    print(f"GEB Application Starting at {log_file}")
-    print(f"Python: {sys.version}")
-    print(f"Path: {os.getcwd()}")
-    print(f"{'='*60}\n")
+
+def _log(msg: str):
+    """Log through uvicorn so output is visible in the terminal."""
+    logger.info(msg)
+    # also flush to stdout as a backup
+    print(msg, flush=True)
+    sys.stdout.flush()
 
 
 async def run_startup_sequence():
     """Run the startup sequence with maximum resilience."""
     global_start = time.time()
-    
-    print("🚀 Initializing application components...\n")
-    
+
+    _log("=" * 60)
+    _log("🚀 GEB startup sequence beginning...")
+    _log("=" * 60)
+
     try:
-        print(f"[{time.time()-global_start:.2f}s] Importing modules...")
+        _log(f"[{time.time()-global_start:.2f}s] Importing modules...")
         from . import state
         from .ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset, ingest_wechat_articles, load_wewe_rss_feeds
         from .clustering.engine import build_story_clusters
-        print(f"[{time.time()-global_start:.2f}s] ✅ Modules imported\n")
+        _log(f"[{time.time()-global_start:.2f}s] ✅ Modules imported")
     except Exception as e:
-        print(f"[{time.time()-global_start:.2f}s] ❌ FATAL: Failed to import modules: {e}")
+        _log(f"[{time.time()-global_start:.2f}s] ❌ FATAL: Failed to import modules: {e}")
         import traceback
         traceback.print_exc()
         raise
-    
-    # Check if already initialized
+
     if state.startup_complete:
-        print(f"[{time.time()-global_start:.2f}s] ✅ Startup already completed in previous run, resuming...\n")
+        _log(f"[{time.time()-global_start:.2f}s] ✅ Already initialized, skipping.")
         return
-    
-    # Phase 1: WebHose
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 1/5] Loading WebHose articles...")
-    phase1_start = time.time()
+
+    # Phase 1: WebHose (main feed)
+    _log(f"[{time.time()-global_start:.2f}s] 📥 Phase 1 — Loading WebHose articles...")
+    t0 = time.time()
     try:
-        count = ingest_webhose_jsonl()
-        phase1_time = time.time() - phase1_start
-        print(f"[{time.time()-global_start:.2f}s] ✅ WebHose: {count} articles loaded ({phase1_time:.2f}s)\n")
+        web_count = ingest_mock_feed()
+        _log(f"[{time.time()-global_start:.2f}s] ✅ WebHose: {web_count} articles ({time.time()-t0:.2f}s)")
     except Exception as e:
-        phase1_time = time.time() - phase1_start
-        print(f"[{time.time()-global_start:.2f}s] ❌ WebHose failed after {phase1_time:.2f}s: {type(e).__name__}: {e}\n")
-        import traceback
-        traceback.print_exc()
-    
-    # Phase 2: Kaggle
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 2/5] Loading Kaggle dataset...")
-    phase2_start = time.time()
-    kaggle_count = 0
+        _log(f"[{time.time()-global_start:.2f}s] ❌ WebHose failed ({time.time()-t0:.2f}s): {type(e).__name__}: {e}")
+        import traceback; traceback.print_exc()
+
+    # Phase 2: Kaggle (explore feed)
+    _log(f"[{time.time()-global_start:.2f}s] 📥 Phase 2 — Loading Kaggle dataset...")
+    t0 = time.time()
     try:
         kaggle_count = ingest_kaggle_dataset()
-        phase2_time = time.time() - phase2_start
-        print(f"[{time.time()-global_start:.2f}s] ✅ Kaggle: {kaggle_count} articles loaded ({phase2_time:.2f}s)\n")
+        _log(f"[{time.time()-global_start:.2f}s] ✅ Kaggle: {kaggle_count} articles ({time.time()-t0:.2f}s)")
+        _log(f"[{time.time()-global_start:.2f}s] 📊 Total in state.articles: {len(state.articles)}")
+        _log(f"[{time.time()-global_start:.2f}s] 📊 state.articles_explore: {len(state.articles_explore)}")
+        _log(f"[{time.time()-global_start:.2f}s] 📊 Categories: {state.available_categories}")
     except Exception as e:
-        phase2_time = time.time() - phase2_start
-        print(f"[{time.time()-global_start:.2f}s] ❌ Kaggle failed after {phase2_time:.2f}s: {type(e).__name__}: {e}\n")
-        import traceback
-        traceback.print_exc()
-    
-    # Phase 3: WeChat RSS
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 3/6] Loading WeChat RSS articles...")
-    phase3_start = time.time()
-    wechat_count = 0
-    try:
-        wechat_count = await ingest_wechat_articles()
-        phase3_time = time.time() - phase3_start
-        print(f"[{time.time()-global_start:.2f}s] ✅ WeChat RSS: {wechat_count} articles loaded ({phase3_time:.2f}s)\n")
-    except Exception as e:
-        phase3_time = time.time() - phase3_start
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  WeChat RSS failed after {phase3_time:.2f}s: {type(e).__name__}: {e}\n")
-        import traceback
-        traceback.print_exc()
-    
-    # Phase 4: WeWe-RSS (WeChat Official Account feeds)
-    print(f"[{time.time()-global_start:.2f}s] 📥 [Phase 4/6] Loading WeWe-RSS feeds...")
-    phase4_start = time.time()
-    wewe_rss_count = 0
-    try:
-        wewe_rss_count = await load_wewe_rss_feeds(limit=20)
-        phase4_time = time.time() - phase4_start
-        print(f"[{time.time()-global_start:.2f}s] ✅ WeWe-RSS: {wewe_rss_count} articles loaded ({phase4_time:.2f}s)\n")
-    except Exception as e:
-        phase4_time = time.time() - phase4_start
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  WeWe-RSS failed after {phase4_time:.2f}s: {type(e).__name__}: {e}\n")
-        print(f"[{time.time()-global_start:.2f}s] ℹ️  (Development mode: continuing without WeWe-RSS data)\n")
-        import traceback
-        traceback.print_exc()
-    
-    # Phase 5: Startup checkpoint - mark startup complete
-    print(f"[{time.time()-global_start:.2f}s] ✅ [Phase 5/6] Startup checkpoint saved")
+        _log(f"[{time.time()-global_start:.2f}s] ❌ Kaggle failed ({time.time()-t0:.2f}s): {type(e).__name__}: {e}")
+        import traceback; traceback.print_exc()
+
     state.startup_complete = True
-    print(f"[{time.time()-global_start:.2f}s] 💾 state.startup_complete = True")
-    print(f"[{time.time()-global_start:.2f}s] 📊 Articles loaded: {len(state.articles)} across {len(state.available_categories)} categories\n")
-    
-    # Phase 6: Background clustering (non-blocking)
-    print(f"[{time.time()-global_start:.2f}s] 🔄 [Phase 6/6] Starting background clustering...")
+    _log(f"[{time.time()-global_start:.2f}s] ✅ state.startup_complete = True")
+
+    # Phase 3: Background clustering
+    _log(f"[{time.time()-global_start:.2f}s] 🔄 Phase 3 — Starting background clustering thread...")
     try:
         import threading
-        
+
         def cluster_worker():
-            cluster_start = time.time()
+            t_start = time.time()
             try:
-                print(f"[{time.time()-global_start:.2f}s]    🔄 Clustering {len(state.articles)} articles...")
+                _log(f"  🔄 Clustering {len(state.articles)} articles...")
                 count = build_story_clusters()
-                cluster_time = time.time() - cluster_start
-                print(f"[{time.time()-global_start:.2f}s]    ✅ Clustering complete: {count} clusters ({cluster_time:.2f}s)\n")
-            except Exception as cluster_err:
-                cluster_time = time.time() - cluster_start
-                print(f"[{time.time()-global_start:.2f}s]    ⚠️  Clustering failed after {cluster_time:.2f}s (non-critical): {type(cluster_err).__name__}: {cluster_err}\n")
-                import traceback
-                traceback.print_exc()
-        
+                _log(f"  ✅ Clustering done: {count} clusters ({time.time()-t_start:.2f}s)")
+            except Exception as err:
+                _log(f"  ⚠️  Clustering failed ({time.time()-t_start:.2f}s): {type(err).__name__}: {err}")
+                import traceback; traceback.print_exc()
+
         thread = threading.Thread(target=cluster_worker, daemon=True, name="ClusterWorker")
         thread.start()
-        print(f"[{time.time()-global_start:.2f}s] ✅ Background clustering thread started\n")
+        _log(f"[{time.time()-global_start:.2f}s] ✅ Clustering thread started")
     except Exception as e:
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  Threading setup failed: {type(e).__name__}: {e}\n")
-        import traceback
-        traceback.print_exc()
-    
-    # Initialize background scheduler for periodic tasks (Hacker News, etc.)
-    try:
-        from workers.scheduler import BackgroundJobScheduler
-        scheduler = BackgroundJobScheduler()
-        scheduler.start_scheduler()
-        print(f"[{time.time()-global_start:.2f}s] ✅ Background scheduler started\n")
-    except Exception as e:
-        print(f"[{time.time()-global_start:.2f}s] ⚠️  Background scheduler failed: {type(e).__name__}: {e}\n")
-        import traceback
-        traceback.print_exc()
-    
-    total_time = time.time() - global_start
-    print("="*60)
-    print("✅ APPLICATION STARTUP COMPLETE")
-    print("="*60)
-    print(f"Total startup time: {total_time:.2f}s")
-    print(f"Articles: {len(state.articles)}")
-    print(f"Categories: {len(state.available_categories)}")
-    print(f"Clusters: {len(state.clusters)}")
-    print(f"Server should be accepting requests now")
-    print("="*60 + "\n")
+        _log(f"[{time.time()-global_start:.2f}s] ⚠️  Threading setup failed: {type(e).__name__}: {e}")
+        import traceback; traceback.print_exc()
+
+    _log("=" * 60)
+    _log(f"✅ STARTUP COMPLETE in {time.time()-global_start:.2f}s")
+    _log(f"   articles={len(state.articles)}  explore={len(state.articles_explore)}  clusters={len(state.clusters)}")
+    _log("=" * 60)

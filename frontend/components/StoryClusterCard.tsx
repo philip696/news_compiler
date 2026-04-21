@@ -27,7 +27,7 @@ const getLogoPath = (sourceId: string | undefined): string => {
   };
   const baseName = normalized.split('.')[0];
   const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
-  return joinUrl(`/data/logos/${filename}`);
+  return joinUrl(BASE_URL, `/data/logos/${filename}`);
 };
 
 export default function StoryClusterCard({ story, onBookmark, onLike, size = "regular", className = "" }: Props) {

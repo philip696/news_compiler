@@ -1,6 +1,5 @@
 from datetime import datetime
-from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class RegisterRequest(BaseModel):
@@ -100,33 +99,6 @@ class MessageResponse(BaseModel):
     message: str
 
 
-class ArticleRecord(BaseModel):
-    id: str
-    title: str
-    content: str
-    url: str
-    source_id: str
-    source_name: str
-    published_at: datetime
-    topic: str
-    embedding: list[float]
-
-
-class UserTopicRecord(BaseModel):
-    topic_id: str
-    followed: bool
-    interest_score: float
-    updated_at: datetime
-
-
-class ArticleActionStatus(BaseModel):
-    article_id: str
-    liked: bool
-    bookmarked: bool
-
-
 class ArticleDetailOut(ArticleOut):
     liked: bool = False
     bookmarked: bool = False
-
-PreferenceValue = Literal["preferred", "neutral", "muted"]

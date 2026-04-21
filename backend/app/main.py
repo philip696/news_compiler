@@ -1,8 +1,10 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import os
+import httpx
 
 from . import state
 from .core.config import settings
@@ -17,15 +19,40 @@ from .api.sources import router as sources_router
 from .api.behavior import router as behavior_router
 from .api.admin import router as admin_router
 from .api.chatbot import router as chatbot_router
-from .api.ai import router as ai_router
-from .api.wewe_rss import router as wewe_rss_router
-from .api.wewe_rss_auth import router as wewe_rss_auth_router
-from .api.wechat_login import router as wechat_login_router
+from .api.wechat import router as wechat_router
+from .services.weread_service import WeReadService, DEFAULT_PLATFORM_URL
 
 # Initialize database tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage startup ingestion + WeRead HTTP client for the app's lifetime."""
+    # ── Data ingestion (runs in a thread so it doesn't block the event loop) ──
+    from .startup import run_startup_sequence
+    import asyncio
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, run_startup_sequence)
+    except Exception as e:
+        print(f"⚠️  Startup sequence error (app continues): {e}", flush=True)
+
+    # ── WeRead HTTP client ─────────────────────────────────────────────────
+    timeout = httpx.Timeout(15.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        app.state.weread_http = client
+        app.state.weread_service = WeReadService(
+            client=client,
+            platform_url=os.getenv("PLATFORM_URL", DEFAULT_PLATFORM_URL),
+        )
+        try:
+            yield
+        finally:
+            app.state.weread_service = None
+            app.state.weread_http = None
+
+
+app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
 # Build list of allowed origins dynamically
 allowed_origins = [
@@ -33,6 +60,8 @@ allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
+    "http://127.0.0.1:8080",  # Alternative frontend ports
+    "http://localhost:8080",
     "https://newscompiler-production.vercel.app",  # Production Vercel
 ]
 
@@ -59,17 +88,6 @@ if data_path.exists():
     app.mount("/data", StaticFiles(directory=str(data_path)), name="data")
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Startup tasks with comprehensive error handling and diagnostics."""
-    from .startup import run_startup_sequence
-    try:
-        await run_startup_sequence()
-    except Exception as e:
-        print(f"❌ STARTUP HANDLER ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
 
 
 @app.get("/")
@@ -102,10 +120,7 @@ app.include_router(sources_router)
 app.include_router(behavior_router)
 app.include_router(admin_router)
 app.include_router(chatbot_router)
-app.include_router(ai_router)
-app.include_router(wechat_login_router)
-app.include_router(wewe_rss_router)
-app.include_router(wewe_rss_auth_router)
+app.include_router(wechat_router)
 
 
 @app.on_event("shutdown")
