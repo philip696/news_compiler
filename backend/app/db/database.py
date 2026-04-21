@@ -29,6 +29,20 @@ def _use_ipv4_hostaddr_for_postgres() -> bool:
     return "postgresql" in u and "db." in u and ".supabase.co" in u
 
 
+def _first_ipv4(host: str, port: int) -> str:
+    """Return first IPv4 for host, or raise if DNS exposes none (common for db.*.supabase.co from some resolvers)."""
+    infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    for fam, _, _, _, sockaddr in infos:
+        if fam == socket.AF_INET:
+            return sockaddr[0]
+    raise OSError(
+        socket.EAI_NONAME,
+        f"no IPv4 address in DNS for {host!r} (only IPv6 or no data). "
+        "Supabase direct db.* hostnames often require the Transaction pooler URI (port 6543) "
+        "or SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on Railway.",
+    )
+
+
 def _postgres_ipv4_connect_args(database_url: str) -> dict:
     """Resolve DB hostname to IPv4 for libpq `hostaddr`.
 
@@ -45,10 +59,7 @@ def _postgres_ipv4_connect_args(database_url: str) -> dict:
     if not parsed.host:
         return {}
     port = parsed.port or 5432
-    infos = socket.getaddrinfo(
-        parsed.host, port, socket.AF_INET, socket.SOCK_STREAM
-    )
-    ipv4 = infos[0][4][0]
+    ipv4 = _first_ipv4(parsed.host, port)
     query = dict(parsed.query)
     sslmode = query.get("sslmode")
     if not sslmode and "supabase" in parsed.host.lower():
@@ -81,16 +92,20 @@ elif "postgresql" in DATABASE_URL:
         try:
             engine_kwargs["connect_args"] = _postgres_ipv4_connect_args(DATABASE_URL)
             logger.info(
-                "PostgreSQL: using IPv4 hostaddr for %s (set DATABASE_IPV4_ONLY=false to disable)",
+                "PostgreSQL: using IPv4 hostaddr for %s (set DATABASE_IPV4_ONLY=false to try default DNS)",
                 make_url(DATABASE_URL).host,
             )
         except OSError as e:
-            logger.warning(
-                "IPv4 hostaddr resolve failed (%s); using default DNS. "
-                "If deploy fails with IPv6 unreachable, set DATABASE_IPV4_ONLY=true after fixing DNS, "
-                "or use Supabase pooler (port 6543) / SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY.",
-                e,
-            )
+            # Never fall back to default DNS here: db.*.supabase.co often resolves only to IPv6,
+            # and Railway cannot reach IPv6 → confusing login failures. Fail fast with a fix.
+            raise RuntimeError(
+                "Cannot open Supabase direct Postgres URL from this host (IPv4 DNS/connection required). "
+                f"Details: {e}\n"
+                "Fix one of:\n"
+                "  • Supabase Dashboard → Connect → 'Transaction pooler' → use that URI in DATABASE_URL (port 6543).\n"
+                "  • Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (app uses HTTPS; no direct Postgres from Railway).\n"
+                "  • Or set DATABASE_IPV4_ONLY=false only if you use a hostname that resolves to reachable IPv4."
+            ) from e
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
