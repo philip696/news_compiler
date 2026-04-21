@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, ''); // Remove trailing slash
+export const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8007").replace(/\/$/, ''); // Remove trailing slash
 
 // Safe URL joining helper - prevents double slashes
 export const joinUrl = (base: string, path: string): string => {
@@ -10,7 +10,7 @@ export const joinUrl = (base: string, path: string): string => {
 };
 
 // Debug log what URL is being used
-console.log("🔧 DEBUG: NEXT_PUBLIC_API_BASE_URL =", process.env.NEXT_PUBLIC_API_BASE_URL);
+console.log("🔧 DEBUG: NEXT_PUBLIC_API_URL =", process.env.NEXT_PUBLIC_API_URL);
 console.log("🔧 DEBUG: Using BASE_URL =", BASE_URL);
 
 export const api = axios.create({
@@ -23,6 +23,15 @@ export const setAuthToken = (token: string | null) => {
     return;
   }
   api.defaults.headers.common.Authorization = `Bearer ${token}`;
+};
+
+const clearLocalAuth = () => {
+  try {
+    localStorage.removeItem("auth-storage");
+  } catch {
+    // no-op
+  }
+  setAuthToken(null);
 };
 
 // Add a request interceptor to ensure token is always sent
@@ -40,3 +49,27 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// If backend says token/user is invalid (for example user deleted),
+// force logout and route to login page.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const requestUrl: string = error?.config?.url || "";
+    const isAuthEndpoint =
+      requestUrl.includes("/api/auth/login") ||
+      requestUrl.includes("/api/auth/register") ||
+      requestUrl.includes("/api/auth/refresh");
+
+    if (status === 401 && !isAuthEndpoint && typeof window !== "undefined") {
+      clearLocalAuth();
+      if (window.location.pathname !== "/login") {
+        const next = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.replace(`/login?next=${next}`);
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);

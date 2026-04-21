@@ -1,9 +1,10 @@
 import { useRouter } from "next/router";
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api, BASE_URL, joinUrl } from "../../services/api";
 import { useAuthStore } from "../../store/auth";
 import { useProtectedRoute } from "../../hooks/useProtectedRoute";
+import { useChatContext } from "../../context/ChatContext";
 
 interface Article {
   id: string;
@@ -34,18 +35,17 @@ const getLogoPath = (sourceId: string): string => {
   };
   const baseName = normalized.split('.')[0];
   const filename = logoMap[normalized] || logoMap[baseName] || "wired.png";
-  return joinUrl(`/data/logos/${filename}`);
+  return joinUrl(BASE_URL, `/data/logos/${filename}`);
 };
 
 export default function ArticlePage() {
   useProtectedRoute();
   const router = useRouter();
-  const { token, userId } = useAuthStore();
+  const { token } = useAuthStore();
   const { id } = router.query;
-  const queryClient = useQueryClient();
   const [isLiked, setIsLiked] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
-  const [likeCount, setLikeCount] = useState(0);
+  const { setPageContext, clearPageContext, setQuickPrompt } = useChatContext();
 
   // Fetch article data from backend with like/bookmark status
   const { data: article, isLoading, error } = useQuery<Article>({
@@ -64,6 +64,22 @@ export default function ArticlePage() {
     enabled: !!id && !!token,
   });
 
+  // Sync article into chat context so Synergy AI can answer questions about it
+  useEffect(() => {
+    if (!article) return;
+    setPageContext({
+      type: 'article',
+      title: article.title,
+      content: article.content,
+      source: article.source_name,
+      url: article.url,
+      topic: article.topic,
+      publishedAt: article.published_at,
+      authors: article.authors,
+    });
+    return () => clearPageContext();
+  }, [article, setPageContext, clearPageContext]);
+
   const handleLike = async () => {
     if (!article) return;
     try {
@@ -72,13 +88,11 @@ export default function ArticlePage() {
           data: { article_id: article.id },
           headers: { Authorization: `Bearer ${token}` }
         });
-        setLikeCount(Math.max(0, likeCount - 1));
       } else {
         await api.post("/api/articles/like", 
           { article_id: article.id },
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        setLikeCount(likeCount + 1);
       }
       setIsLiked(!isLiked);
     } catch (error) {
@@ -216,7 +230,7 @@ export default function ArticlePage() {
             {article.main_image ? (
               <>
                 <img
-                  src={article.main_image.startsWith('/data') ? joinUrl(article.main_image) : article.main_image}
+                  src={article.main_image.startsWith('/data') ? joinUrl(BASE_URL, article.main_image) : article.main_image}
                   alt={article.title}
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={(e) => {
@@ -319,6 +333,19 @@ export default function ArticlePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 5a2 2 0 012-2h6a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                   </svg>
                   Bookmark
+                </button>
+
+                {/* Ask AI Button */}
+                <button
+                  onClick={() => setQuickPrompt('Summarize this article for me.')}
+                  className="flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-5 py-2 font-medium text-white transition-colors shadow-md"
+                  title="Ask Synergy AI about this article"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+                      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3-3-3z" />
+                  </svg>
+                  Ask AI
                 </button>
 
                 {/* Read Original Article Button */}

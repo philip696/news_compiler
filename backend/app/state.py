@@ -39,10 +39,8 @@ SOURCES = {
 
 # Startup control
 startup_complete: bool = False
-now_utc = lambda: datetime.now(timezone.utc)
 
 users: dict[str, dict[str, Any]] = {}
-users_by_email: dict[str, str] = {}
 user_topics: dict[str, dict[str, dict[str, Any]]] = {}
 user_source_preferences: dict[str, dict[str, str]] = {}
 bookmarks: dict[str, set[str]] = {}

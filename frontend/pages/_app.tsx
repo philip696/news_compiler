@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { setAuthToken } from "../services/api";
 import { useAuthStore } from "../store/auth";
+import ChatBot from "../components/ChatBot";
+import { ChatContextProvider } from "../context/ChatContext";
 import "../styles/globals.css";
 
 const queryClient = new QueryClient();
@@ -32,7 +34,10 @@ export default function App({ Component, pageProps }: AppProps) {
         <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>" />
       </Head>
       <QueryClientProvider client={queryClient}>
-        {isHydrated ? <Component {...pageProps} /> : null}
+        <ChatContextProvider>
+          {isHydrated ? <Component {...pageProps} /> : null}
+          {isHydrated && token && <ChatBot />}
+        </ChatContextProvider>
       </QueryClientProvider>
     </>
   );

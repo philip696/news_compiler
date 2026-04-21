@@ -1,6 +1,6 @@
 import { useRouter } from "next/router";
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../../services/api";
 import { useAuthStore } from "../../store/auth";
 import { useProtectedRoute } from "../../hooks/useProtectedRoute";

@@ -1,10 +1,22 @@
-"""Chatbot API endpoints for article summarization and advanced search."""
+"""Chatbot API endpoints for article summarization, search, and conversational AI."""
 
+import os
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from ..core.deps import get_current_user
 from ..services.chatbot_service import chatbot
 from pydantic import BaseModel
+
+
+class ChatMessage(BaseModel):
+    role: str   # "user" | "assistant" | "system"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    context: Optional[str] = None   # page-level context injected by the frontend
 
 router = APIRouter(prefix="/api/chatbot", tags=["chatbot"])
 
@@ -109,6 +121,61 @@ def quick_search(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Quick search failed: {str(e)}")
+
+@router.post("/chat")
+async def chat(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Conversational chat powered by DeepSeek."""
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+
+    if not api_key:
+        raise HTTPException(status_code=503, detail="DeepSeek API key not configured")
+
+    base_system = (
+        "You are Synergy AI, an intelligent news assistant built into the Synergy "
+        "news platform. You help users understand articles, discover trends, and "
+        "answer questions about current events. Be concise, insightful, and friendly. "
+        "When the user asks you to summarize or discuss an article, use the article "
+        "content provided in the context section below — never say you cannot access it."
+    )
+    if request.context:
+        base_system += f"\n\n--- Current page context ---\n{request.context}\n--- End context ---"
+
+    system_msg = {"role": "system", "content": base_system}
+
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [system_msg] + [m.dict() for m in request.messages],
+        "stream": False,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                "https://api.deepseek.com/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            reply = data["choices"][0]["message"]["content"]
+            return {"reply": reply}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"DeepSeek API error: {e.response.text}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="DeepSeek timed out — please try again.")
+    except httpx.ConnectError as e:
+        raise HTTPException(status_code=502, detail=f"Cannot reach DeepSeek: {repr(e)}")
+    except (KeyError, IndexError, ValueError) as e:
+        raise HTTPException(status_code=502, detail=f"Unexpected DeepSeek response format: {repr(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"DeepSeek request failed: {type(e).__name__}: {repr(e)}")
+
 
 @router.get("/health")
 def chatbot_health():

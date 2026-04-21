@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from ..ingestion.loader import ingest_webhose_jsonl
+from ..ingestion.loader import ingest_webhose_jsonl, ingest_kaggle_dataset
 from ..clustering.engine import build_story_clusters
 from ..schemas import MessageResponse
 
@@ -13,6 +13,12 @@ def ingest_dataset():
     return {"message": f"Ingested {inserted} articles"}
 
 
+@router.post("/ingest-kaggle", response_model=MessageResponse)
+def ingest_kaggle():
+    inserted = ingest_kaggle_dataset()
+    return {"message": f"Ingested {inserted} Kaggle articles"}
+
+
 @router.post("/cluster", response_model=MessageResponse)
 def cluster_articles():
     total = build_story_clusters()
@@ -21,6 +27,7 @@ def cluster_articles():
 
 @router.post("/rebuild", response_model=MessageResponse)
 def rebuild_all():
-    inserted = ingest_webhose_jsonl()
+    web = ingest_webhose_jsonl()
+    kaggle = ingest_kaggle_dataset()
     total = build_story_clusters()
-    return {"message": f"Ingested {inserted} articles and built {total} clusters"}
+    return {"message": f"Ingested {web} web + {kaggle} Kaggle articles, built {total} clusters"}

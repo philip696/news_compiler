@@ -389,18 +389,28 @@ def ingest_kaggle_dataset() -> int:
             print(f"    📝 Adding {len(selected_articles)} to state...", flush=True)
             sys.stdout.flush()
             
-            # Add to state
+            # Add to state.articles (main feed) AND state.articles_explore (explore feed)
             if category not in state.available_categories:
                 state.available_categories.append(category)
             if category not in state.articles_by_category:
                 state.articles_by_category[category] = []
-            
+
+            if category not in state.explore_categories:
+                state.explore_categories.append(category)
+            if category not in state.articles_explore_by_category:
+                state.articles_explore_by_category[category] = []
+
             for article in selected_articles:
-                # Skip if article already exists (from webhose)
                 if article["id"] not in state.articles:
                     state.articles[article["id"]] = article
                     state.article_popularity.setdefault(article["id"], 0)
                     state.articles_by_category[category].append(article)
+
+                # Always add to explore (Kaggle articles belong there too)
+                if article["id"] not in state.articles_explore:
+                    state.articles_explore[article["id"]] = article
+                    state.article_explore_popularity.setdefault(article["id"], 0)
+                    state.articles_explore_by_category[category].append(article)
                     inserted += 1
             
             print(f"    ✓ {category}: {len(selected_articles)} articles added ({inserted} total so far)", flush=True)

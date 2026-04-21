@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { api, setAuthToken } from "../services/api";
@@ -7,15 +7,9 @@ import { useFeed } from "../hooks/useFeed";
 import { useProtectedRoute } from "../hooks/useProtectedRoute";
 import StoryClusterCard from "../components/StoryClusterCard";
 import ArticleCard from "../components/ArticleCard";
-import TopicSelector from "../components/TopicSelector";
-import SourcePreferences from "../components/SourcePreferences";
-
-type Topic = {
-  id: string;
-  name: string;
-  followed: boolean;
-  interest_score: number;
-};
+import WeChatOfficialAccounts from "../components/WeChatOfficialAccounts";
+import { useChatContext } from "../context/ChatContext";
+import { motion } from "framer-motion";
 
 type Article = {
   id: string;
@@ -28,18 +22,87 @@ type Article = {
   category: string;
 };
 
+type WeReadArticle = {
+  id: string;
+  mpId: string;
+  title: string;
+  picUrl: string;
+  publishTime: number | string;
+};
+
+type WeReadFeed = {
+  id: string;
+  mpName: string;
+  mpCover: string;
+  articleCount: number;
+  syncTime: number;
+};
+
 export default function HomePage() {
   useProtectedRoute();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { token, setToken } = useAuthStore();
+  const { setPageContext } = useChatContext();
   const [username, setUsername] = useState("demo");
   const [password, setPassword] = useState("secret123");
   const [status, setStatus] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Lock background scroll + close the drawer with ESC while the mobile sidebar is open
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (sidebarOpen) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") setSidebarOpen(false);
+      };
+      window.addEventListener("keydown", onKey);
+      return () => {
+        document.body.style.overflow = prev;
+        window.removeEventListener("keydown", onKey);
+      };
+    }
+  }, [sidebarOpen]);
+
+  // Keep chat context in sync with what the user is browsing
+  useEffect(() => {
+    if (selectedCategory) {
+      setPageContext({ type: 'category', label: selectedCategory });
+    } else {
+      setPageContext({ type: 'feed' });
+    }
+  }, [selectedCategory, setPageContext]);
   const [categoryArticles, setCategoryArticles] = useState<Article[]>([]);
   const [loadingCategory, setLoadingCategory] = useState(false);
   const [articleActions, setArticleActions] = useState<{ [key: string]: { liked: boolean; bookmarked: boolean } }>({});
+
+  // ── Search ────────────────────────────────────────────────────────── //
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchInput = (value: string) => {
+    setSearchInput(value);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (value.trim() === "") {
+      setSearchQuery("");
+      return;
+    }
+    searchDebounce.current = setTimeout(() => setSearchQuery(value.trim()), 350);
+  };
+
+  const { data: searchResults = [], isFetching: searchLoading } = useQuery({
+    queryKey: ["search", searchQuery],
+    queryFn: async () => {
+      const res = await api.get("/api/feed/search", { params: { q: searchQuery, limit: 60 } });
+      return res.data.stories || [];
+    },
+    enabled: !!token && searchQuery.length > 0,
+    staleTime: 30_000,
+  });
 
   const { data: stories = [] } = useFeed(!!token);
 
@@ -53,17 +116,59 @@ export default function HomePage() {
     enabled: !!token
   });
 
-  const { data: topics = [] } = useQuery({
-    queryKey: ["topics", token],
-    queryFn: async () => (await api.get<Topic[]>("/api/topics")).data,
-    enabled: !!token
+  // ── Explore (Kaggle) feed ─────────────────────────────────────────── //
+  const { data: exploreStories = [] } = useQuery({
+    queryKey: ["explore"],
+    queryFn: async () => {
+      const res = await api.get<{ stories: any[] }>("/api/feed/explore", { params: { limit: 50 } });
+      return res.data.stories || [];
+    },
+    enabled: !!token,
   });
 
-  const sourceIds = useMemo(() => {
-    const ids = new Set<string>();
-    stories.forEach((story) => story.articles.forEach((article) => ids.add(article.source_id)));
-    return Array.from(ids);
-  }, [stories]);
+  const { data: exploreCategoriesData = [] } = useQuery<string[]>({
+    queryKey: ["exploreCategories", token],
+    queryFn: async () => {
+      const res = await api.get("/api/feed/explore/categories");
+      return res.data.categories || [];
+    },
+    enabled: !!token,
+  });
+
+  // WebHose stories first, Kaggle stories last
+  const allStories = useMemo(
+    () => [...stories, ...exploreStories],
+    [stories, exploreStories]
+  );
+
+  // Merged deduped category list
+  const allCategories = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const c of [...(categoriesData || []), ...exploreCategoriesData]) {
+      if (!seen.has(c)) { seen.add(c); merged.push(c); }
+    }
+    return merged;
+  }, [categoriesData, exploreCategoriesData]);
+
+  const { data: wereadFeeds = [] } = useQuery<WeReadFeed[]>({
+    queryKey: ["wereadFeeds"],
+    queryFn: async () => (await api.get("/api/wechat/mps")).data,
+    enabled: !!token && selectedCategory === "wechat",
+    refetchInterval: selectedCategory === "wechat" ? 60_000 : false,
+  });
+
+  const [wechatMpFilter, setWechatMpFilter] = useState<string | null>(null);
+
+  const { data: wereadArticles = [], isLoading: wereadLoading } = useQuery<WeReadArticle[]>({
+    queryKey: ["wereadArticles", wechatMpFilter],
+    queryFn: async () => {
+      const params = wechatMpFilter ? { mpId: wechatMpFilter } : {};
+      return (await api.get("/api/wechat/articles", { params })).data;
+    },
+    enabled: !!token && selectedCategory === "wechat",
+    refetchInterval: selectedCategory === "wechat" ? 60_000 : false,
+  });
 
   const auth = async (mode: "register" | "login") => {
     try {
@@ -80,11 +185,21 @@ export default function HomePage() {
       let errorMessage = "Authentication failed";
       
       if (Array.isArray(detail)) {
-        errorMessage = detail.map((err: any) => err.msg || String(err)).join(', ');
+        errorMessage = detail
+          .map((err: any) => {
+            if (typeof err === 'string') return err;
+            if (typeof err === 'object' && err !== null) {
+              // Try to extract msg, else JSON.stringify
+              return err.msg || JSON.stringify(err);
+            }
+            return String(err);
+          })
+          .join(', ');
       } else if (typeof detail === 'string') {
         errorMessage = detail;
+      } else if (typeof detail === 'object' && detail !== null) {
+        errorMessage = JSON.stringify(detail);
       }
-      
       setStatus(errorMessage);
     }
   };
@@ -93,8 +208,24 @@ export default function HomePage() {
     setSelectedCategory(category);
     setLoadingCategory(true);
     try {
-      const response = await api.get(`/api/feed/category/${encodeURIComponent(category)}?limit=50`);
-      setCategoryArticles(response.data.articles || []);
+      const [webRes, exploreRes] = await Promise.allSettled([
+        api.get(`/api/feed/category/${encodeURIComponent(category)}?limit=50`),
+        api.get(`/api/feed/explore/category/${encodeURIComponent(category)}?limit=50`),
+      ]);
+      const webArticles: Article[] =
+        webRes.status === "fulfilled" ? webRes.value.data.articles || [] : [];
+      // explore returns StoryClusterOut[] — extract the single article from each cluster
+      const exploreArticles: Article[] =
+        exploreRes.status === "fulfilled"
+          ? (exploreRes.value.data.stories || []).flatMap((s: any) => s.articles || [])
+          : [];
+      // Merge, deduplicate by id
+      const seen = new Set<string>();
+      const merged: Article[] = [];
+      for (const a of [...webArticles, ...exploreArticles]) {
+        if (!seen.has(a.id)) { seen.add(a.id); merged.push(a); }
+      }
+      setCategoryArticles(merged);
     } catch (error) {
       console.error("Failed to load category articles:", error);
       setCategoryArticles([]);
@@ -138,18 +269,6 @@ export default function HomePage() {
     }
   };
 
-  const follow = async (topicId: string) => {
-    await api.post("/api/topics/follow", { topic_id: topicId });
-    queryClient.invalidateQueries({ queryKey: ["topics", token] });
-    queryClient.invalidateQueries({ queryKey: ["feed"] });
-  };
-
-  const unfollow = async (topicId: string) => {
-    await api.delete("/api/topics/unfollow", { data: { topic_id: topicId } });
-    queryClient.invalidateQueries({ queryKey: ["topics", token] });
-    queryClient.invalidateQueries({ queryKey: ["feed"] });
-  };
-
   const bookmark = async (articleId: string) => {
     try {
       const isCurrentlyBookmarked = articleActions[articleId]?.bookmarked || false;
@@ -186,45 +305,66 @@ export default function HomePage() {
     }
   };
 
-  const muteSource = async (sourceId: string) => {
-    await api.post("/api/source/mute", { source_id: sourceId });
-    queryClient.invalidateQueries({ queryKey: ["feed"] });
-  };
-
-  const preferSource = async (sourceId: string) => {
-    await api.post("/api/source/prefer", { source_id: sourceId });
-    queryClient.invalidateQueries({ queryKey: ["feed"] });
-  };
-
   return (
     <div className="min-h-screen bg-[#f3f4f6] relative overflow-hidden font-sans text-slate-800">
       {/* Abstract network-node background pattern placeholder */}
       <div className="absolute inset-0 z-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, #94a3b8 1px, transparent 0)', backgroundSize: '32px 32px' }}></div>
 
       {/* Navigation Bar */}
-      <nav className="relative z-10 flex h-16 items-center justify-between bg-slate-900 px-6 shadow-md">
-        {/* Logo */}
-        <div className="flex w-64 items-center gap-3 text-white">
+      <nav className="relative z-10 flex h-16 items-center justify-between bg-slate-900 px-4 md:px-6 shadow-md gap-2">
+        {/* Logo + mobile hamburger */}
+        <div className="flex items-center gap-2 md:gap-3 text-white md:w-64">
+          {token && (
+            <button
+              onClick={() => setSidebarOpen((v) => !v)}
+              aria-label={sidebarOpen ? "Close menu" : "Open menu"}
+              aria-expanded={sidebarOpen}
+              className="xl:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-200 hover:bg-slate-800 transition-colors"
+            >
+              {sidebarOpen ? (
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              )}
+            </button>
+          )}
           <div className="flex h-8 w-8 items-center justify-center rounded bg-white text-slate-900 font-bold">S</div>
-          <span className="text-xl font-semibold tracking-wide">Synergy</span>
+          <span className="hidden sm:inline text-xl font-semibold tracking-wide">Synergy</span>
         </div>
 
         {/* Search Bar */}
-        <div className="flex flex-1 items-center justify-center max-w-2xl px-8">
+        <div className="flex flex-1 items-center justify-center max-w-2xl px-2 md:px-8">
           <div className="relative w-full">
             <input
               type="text"
-              placeholder="Search intelligence..."
-              className="w-full rounded-full bg-slate-800 border border-slate-700 py-2 pl-12 pr-4 text-sm text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500 transition-all"
+              value={searchInput}
+              onChange={(e) => handleSearchInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") handleSearchInput(""); }}
+              placeholder="Search articles..."
+              className="w-full rounded-full bg-slate-800 border border-slate-700 py-2 pl-12 pr-10 text-sm text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500 transition-all"
             />
             <svg className="absolute left-4 top-2.5 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
+            {searchInput && (
+              <button
+                onClick={() => handleSearchInput("")}
+                className="absolute right-3 top-2 text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Icons */}
-        <div className="flex w-64 items-center justify-end gap-5 text-slate-300">
+        <div className="flex items-center justify-end gap-3 md:gap-5 md:w-64 text-slate-300">
           {token && (
             <button 
               onClick={() => router.push("/categories")}
@@ -257,7 +397,7 @@ export default function HomePage() {
         </div>
       </nav>
 
-      <main className="relative z-10 mx-auto max-w-screen-2xl p-8 h-[calc(100vh-4rem)] overflow-y-auto">
+      <main className="relative z-10 mx-auto max-w-screen-2xl p-4 md:p-6 lg:p-8 h-[calc(100vh-4rem)] overflow-y-auto">
 
         {!token && (
           <section className="mb-8 mx-auto max-w-md grid gap-4 rounded-3xl border border-slate-200/50 bg-white/80 backdrop-blur-xl p-6 shadow-xl">
@@ -288,29 +428,62 @@ export default function HomePage() {
         )}
 
         {token && (
-          <div className="flex gap-8 h-full">
-            {/* Sidebar with Categories */}
-            <aside className="w-72 hidden xl:flex flex-col gap-4 flex-shrink-0 max-h-[calc(100vh-8rem)] overflow-y-auto">
-              <div className="rounded-3xl border border-slate-200/60 bg-white/70 backdrop-blur-md p-5 shadow-sm sticky top-0">
-                <h3 className="font-semibold text-slate-900 mb-4">📚 Categories</h3>
-                <div className="flex flex-col gap-2 max-h-96 overflow-y-auto">
+          <div className="flex xl:gap-8 h-full">
+
+            {/* Mobile backdrop — taps outside close the drawer */}
+            {sidebarOpen && (
+              <div
+                onClick={() => setSidebarOpen(false)}
+                className="xl:hidden fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm"
+                aria-hidden="true"
+              />
+            )}
+
+            {/* Sidebar: fixed slide-in drawer on < xl, static column on xl+ */}
+            <aside
+              className={`
+                flex flex-col gap-4 flex-shrink-0 overflow-y-auto
+                bg-[#f3f4f6] xl:bg-transparent
+                fixed z-40 top-16 left-0 bottom-0 w-72 p-4 pr-2 border-r border-slate-200 shadow-xl
+                transform transition-transform duration-300 ease-out
+                ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
+                xl:static xl:translate-x-0 xl:p-0 xl:border-0 xl:shadow-none
+                xl:w-72 xl:max-h-[calc(100vh-8rem)]
+              `}
+              aria-hidden={!sidebarOpen && typeof window !== "undefined" && window.innerWidth < 1280}
+            >
+              <div className="rounded-3xl border border-slate-200/60 bg-white/80 xl:bg-white/70 backdrop-blur-md p-5 shadow-sm">
+                <h3 className="font-semibold text-slate-900 mb-3">Browse</h3>
+                <div className="flex flex-col gap-1 overflow-y-auto max-h-[60vh]">
+
+                  {/* Top-level nav */}
                   <button
-                    onClick={() => {
-                      setSelectedCategory(null);
-                      setCategoryArticles([]);
-                    }}
+                    onClick={() => { setSelectedCategory(null); setCategoryArticles([]); setSidebarOpen(false); }}
                     className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      selectedCategory === null 
-                        ? 'bg-slate-900 text-white' 
-                        : 'text-slate-700 hover:bg-slate-100'
+                      selectedCategory === null ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
                     }`}
                   >
                     🏠 Main Feed
                   </button>
-                  {categoriesData && Array.isArray(categoriesData) && categoriesData.map((category: string) => (
+                  <button
+                    onClick={() => { setSelectedCategory("wechat"); setCategoryArticles([]); setWechatMpFilter(null); setSidebarOpen(false); }}
+                    className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      selectedCategory === "wechat" ? 'bg-green-700 text-white' : 'text-slate-700 hover:bg-green-50'
+                    }`}
+                  >
+                    🟩 WeChat Articles
+                  </button>
+
+                  {/* All categories (web + Kaggle merged) */}
+                  {allCategories.length > 0 && (
+                    <>
+                      <p className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Categories
+                      </p>
+                      {allCategories.map((category: string) => (
                     <button
                       key={category}
-                      onClick={() => handleCategoryClick(category)}
+                      onClick={() => { handleCategoryClick(category); setSidebarOpen(false); }}
                       className={`text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                         selectedCategory === category 
                           ? 'bg-slate-900 text-white' 
@@ -320,40 +493,213 @@ export default function HomePage() {
                       {category}
                     </button>
                   ))}
+                    </>
+                  )}
                 </div>
               </div>
+
+              {/* WeChat account management panel */}
+              {selectedCategory === "wechat" && (
+                <div className="rounded-3xl border border-green-200/60 bg-white/80 xl:bg-white/70 backdrop-blur-md p-5 shadow-sm">
+                  <WeChatOfficialAccounts onLogin={() => queryClient.invalidateQueries({ queryKey: ["wereadFeeds"] })} />
+              </div>
+              )}
             </aside>
 
-            {/* Main Feed or Category Articles */}
-            <section className="flex-1 pb-12">
-              {selectedCategory === null ? (
-                // Main Feed View
+            {/* Main Feed, Category Articles, or WeChat Articles */}
+            <section className="flex-1 pb-12 relative">
+              {searchQuery ? (
+                // ── Search Results View ───────────────────────────────── //
                 <>
-                  <div className="mb-6 flex items-end justify-between">
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-900">Intelligence Feed</h1>
-                    <span className="text-sm font-medium text-slate-500 uppercase tracking-wider">{stories.length} updates</span>
+                  <div className="mb-6 flex items-end justify-between flex-wrap gap-2">
+                    <div>
+                      <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                        Results for &ldquo;{searchQuery}&rdquo;
+                      </h1>
+                      {!searchLoading && (
+                        <p className="text-sm text-slate-500 mt-1">{searchResults.length} articles found</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleSearchInput("")}
+                      className="text-sm text-slate-500 hover:text-slate-800 font-medium transition-colors"
+                    >
+                      ✕ Clear search
+                    </button>
                   </div>
+
+                  {searchLoading ? (
+                    <div className="flex justify-center items-center h-40">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+                    </div>
+                  ) : searchResults.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white/70 p-12 text-center max-w-md mx-auto mt-12">
+                      <p className="text-2xl mb-3">🔍</p>
+                      <h3 className="font-semibold text-slate-800 mb-2">No results found</h3>
+                      <p className="text-sm text-slate-500">Try a different search term.</p>
+                    </div>
+                  ) : (
                   <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 auto-rows-[280px]">
-                    {stories.map((story, i) => {
+                      {searchResults.map((story: any, i: number) => {
+                        const pattern = i % 8;
                       let size: 'compact' | 'regular' | 'featured' = 'compact';
                       let className = '';
-                      
-                      const pattern = i % 8;
-                      
-                      if (pattern === 0 || pattern === 5) {
-                        size = 'featured';
-                        className = 'md:col-span-2 md:row-span-2';
-                      } else if (pattern === 1 || pattern === 4) {
-                        size = 'regular';
-                        className = 'md:col-span-1 md:row-span-2';
-                      } else {
-                        size = 'compact';
-                        className = 'md:col-span-1 md:row-span-1';
-                      }
+                        if (pattern === 0 || pattern === 5) { size = 'featured'; className = 'md:col-span-2 md:row-span-2'; }
+                        else if (pattern === 1 || pattern === 4) { size = 'regular'; className = 'md:col-span-1 md:row-span-2'; }
+                        return (
+                          <StoryClusterCard
+                            key={story.cluster_id || story.id || i}
+                            story={story}
+                            onBookmark={bookmark}
+                            onLike={like}
+                            size={size}
+                            className={className}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : selectedCategory === "wechat" ? (
+                // ── WeChat / WeRead Articles View ─────────────────────── //
+                <>
+                  <div className="mb-6 flex items-end justify-between flex-wrap gap-3">
+                    <div>
+                      <h1 className="text-2xl font-bold tracking-tight text-slate-900">WeChat Articles</h1>
+                      <p className="text-sm text-slate-500 mt-1">
+                        {wereadArticles.length} articles from {wereadFeeds.length} official accounts
+                      </p>
+                    </div>
+                    {/* Per-feed filter pills */}
+                    {wereadFeeds.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => setWechatMpFilter(null)}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                            wechatMpFilter === null ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          All
+                        </button>
+                        {wereadFeeds.map((f) => (
+                          <button
+                            key={f.id}
+                            onClick={() => setWechatMpFilter(f.id === wechatMpFilter ? null : f.id)}
+                            className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                              wechatMpFilter === f.id ? 'bg-green-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {f.mpName || f.id}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
+                  {wereadLoading ? (
+                    <div className="flex justify-center items-center h-40">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-green-700" />
+                    </div>
+                  ) : wereadArticles.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white/70 p-12 text-center max-w-md mx-auto mt-12">
+                      <p className="text-2xl mb-3">🟩</p>
+                      <h3 className="font-semibold text-slate-800 mb-2">No WeChat articles yet</h3>
+                      <p className="text-sm text-slate-500">
+                        Add an official account in the sidebar by pasting an article share link, then sync to import articles.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 auto-rows-[280px]">
+                      {wereadArticles.map((article, i) => {
+                        const mpName = wereadFeeds.find((f) => f.id === article.mpId)?.mpName || article.mpId;
+                        const publishDate = typeof article.publishTime === "number"
+                          ? new Date(article.publishTime * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+                          : new Date(article.publishTime).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                      const pattern = i % 8;
+                        let colSpan = "md:col-span-1 md:row-span-1";
+                        let titleSize = "text-base font-semibold";
+                        let lineClamp = "line-clamp-2";
+                        let padding = "p-4";
+                      if (pattern === 0 || pattern === 5) {
+                          colSpan = "md:col-span-2 md:row-span-2";
+                          titleSize = "text-2xl font-extrabold";
+                          lineClamp = "line-clamp-4";
+                          padding = "p-8";
+                      } else if (pattern === 1 || pattern === 4) {
+                          colSpan = "md:col-span-1 md:row-span-2";
+                          titleSize = "text-lg font-bold";
+                          lineClamp = "line-clamp-3";
+                          padding = "p-5";
+                        }
+                        return (
+                          <motion.a
+                            key={article.id}
+                            href={`https://mp.weixin.qq.com/s/${article.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            initial={{ opacity: 0, scale: 0.98, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            transition={{ duration: 0.3, ease: "easeOut" }}
+                            className={`${colSpan} group relative flex flex-col overflow-hidden rounded-3xl bg-slate-900 shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer h-full w-full min-h-[250px] border border-white/10`}
+                          >
+                            {/* Background image */}
+                            <div
+                              className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
+                              style={{ backgroundImage: article.picUrl ? `url(${article.picUrl})` : "linear-gradient(135deg, #1a472a 0%, #2d6a4f 100%)" }}
+                            />
+                            {/* Gradient overlay */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/10" />
+                            {/* WeChat badge */}
+                            <div className={`relative flex flex-col justify-between ${padding} h-full z-10`}>
+                              <div className="flex justify-between items-start">
+                                <span className="inline-block rounded-lg bg-green-700/80 backdrop-blur-md px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white border border-green-500/30">
+                                  WeChat
+                                </span>
+                                <span className="rounded-full bg-black/50 backdrop-blur-md px-2.5 py-1 text-[10px] font-semibold text-white/80 border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  Open ↗
+                                </span>
+                              </div>
+                              <div className="flex flex-col gap-2 mt-auto">
+                                <h3 className={`${lineClamp} ${titleSize} leading-tight tracking-tight text-white drop-shadow-md`}>
+                                  {article.title}
+                                </h3>
+                                <div className="flex items-center gap-2 text-xs text-slate-300">
+                                  <span className="font-semibold text-white/90">{mpName}</span>
+                                  <span className="text-white/40">·</span>
+                                  <span className="text-white/70">{publishDate}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.a>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : selectedCategory === null ? (
+                // ── Main Feed View (Web + Kaggle merged) ──────────────── //
+                <>
+                  <div className="mb-6 flex items-end justify-between flex-wrap gap-2">
+                    <div>
+                      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Intelligence Feed</h1>
+                    </div>
+                  </div>
+
+                  {allStories.length === 0 ? (
+                    <div className="flex justify-center items-center h-40">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-900" />
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 auto-rows-[280px]">
+                      {allStories.map((story: any, i: number) => {
+                        const pattern = i % 8;
+                        let size: 'compact' | 'regular' | 'featured' = 'compact';
+                        let className = '';
+                        if (pattern === 0 || pattern === 5) { size = 'featured'; className = 'md:col-span-2 md:row-span-2'; }
+                        else if (pattern === 1 || pattern === 4) { size = 'regular'; className = 'md:col-span-1 md:row-span-2'; }
                       return (
                         <StoryClusterCard 
-                          key={story.cluster_id} 
+                            key={story.cluster_id || story.id || i}
                           story={story} 
                           onBookmark={bookmark} 
                           onLike={like}
@@ -363,11 +709,12 @@ export default function HomePage() {
                       );
                     })}
                   </div>
+                  )}
                 </>
               ) : (
-                // Category Articles View
+                // ── Category Articles View ────────────────────────────── //
                 <>
-                  <div className="mb-6 flex items-end justify-between">
+                  <div className="mb-6 flex items-end justify-between flex-wrap gap-2">
                     <div>
                       <h1 className="text-2xl font-bold tracking-tight text-slate-900">{selectedCategory}</h1>
                       <p className="text-sm text-slate-500 mt-1">Browse articles from this category</p>
@@ -383,9 +730,7 @@ export default function HomePage() {
                       {categoryArticles.map((article, idx) => {
                         let size: 'compact' | 'regular' | 'featured' = 'compact';
                         let className = '';
-                        
                         const pattern = idx % 8;
-                        
                         if (pattern === 0 || pattern === 5) {
                           size = 'featured';
                           className = 'md:col-span-2 md:row-span-2';
@@ -396,7 +741,6 @@ export default function HomePage() {
                           size = 'compact';
                           className = 'md:col-span-1 md:row-span-1';
                         }
-
                         return (
                           <ArticleCard
                             key={article.id}
@@ -414,6 +758,7 @@ export default function HomePage() {
                   )}
                 </>
               )}
+
             </section>
           </div>
         )}
