@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+import re
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.requests import Request
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import os
@@ -104,6 +106,23 @@ if vercel_url := os.getenv("VERCEL_URL"):
 # Deduplicate while preserving order
 allowed_origins = list(dict.fromkeys(allowed_origins))
 
+_LOCALHOST_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
+
+
+def _cors_headers_for_request(request: Request) -> dict[str, str]:
+    """Exception handlers return JSONResponse directly; ensure browsers still get ACAO on errors."""
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    if origin not in allowed_origins and not _LOCALHOST_ORIGIN_RE.match(origin):
+        return {}
+    return {
+        "access-control-allow-origin": origin,
+        "access-control-allow-credentials": "true",
+        "vary": "Origin",
+    }
+
+
 # Configure CORS middleware - MUST be first middleware added
 app.add_middleware(
     CORSMiddleware,
@@ -174,17 +193,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request, exc):
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Handle HTTP exceptions with logging."""
     print(f"⚠️  HTTP {exc.status_code}: {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
+        headers=_cors_headers_for_request(request),
     )
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
+async def general_exception_handler(request: Request, exc: Exception):
     """Handle unexpected exceptions."""
     print(f"❌ Unexpected error: {type(exc).__name__}: {exc}")
     import traceback
@@ -192,4 +212,5 @@ async def general_exception_handler(request, exc):
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
+        headers=_cors_headers_for_request(request),
     )

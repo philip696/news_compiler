@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..db.app_repository import AppRepository, get_repo
+
+logger = logging.getLogger(__name__)
 from ..core.security import create_access_token
 from ..schemas import RegisterRequest, LoginRequest, TokenResponse, UserOut
 from ..services.auth_service import register_user, login_user
@@ -21,7 +25,16 @@ def register(payload: RegisterRequest, repo: AppRepository = Depends(get_repo)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, repo: AppRepository = Depends(get_repo)):
-    user = login_user(payload.username, payload.password, repo)
+    try:
+        user = login_user(payload.username, payload.password, repo)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Login failed (database or dependency error)")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable. Check database configuration.",
+        )
     token = create_access_token(
         {
             "user_id": user["id"],
