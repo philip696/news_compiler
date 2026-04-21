@@ -7,6 +7,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+from .supabase_client import use_supabase_runtime
+
 logger = logging.getLogger(__name__)
 
 # Create data directory if it doesn't exist
@@ -15,6 +17,8 @@ db_dir.mkdir(parents=True, exist_ok=True)
 
 # Database URL - supports both SQLite (local) and PostgreSQL (production)
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{db_dir}/geb.db")
+
+_sql_echo = os.getenv("SQL_ECHO", "false").lower() == "true"
 
 
 def _use_ipv4_hostaddr_for_postgres() -> bool:
@@ -76,18 +80,38 @@ def _postgres_ipv4_connect_args(database_url: str) -> dict:
     }
 
 
-# Engine configuration based on database type
-engine_kwargs = {}
-if "sqlite" in DATABASE_URL:
-    # SQLite specific settings
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-    engine_kwargs["echo"] = os.getenv("SQL_ECHO", "false").lower() == "true"
-elif "postgresql" in DATABASE_URL:
-    # PostgreSQL specific settings - use connection pooling
-    engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "10"))
-    engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "20"))
-    engine_kwargs["pool_pre_ping"] = True  # Test connections before using
-    engine_kwargs["echo"] = os.getenv("SQL_ECHO", "false").lower() == "true"
+def _build_engine():
+    """Create SQLAlchemy engine. When PostgREST is the runtime, avoid opening direct db.* Postgres at import."""
+    if "sqlite" in DATABASE_URL:
+        return create_engine(
+            DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            echo=_sql_echo,
+        )
+
+    if "postgresql" not in DATABASE_URL:
+        return create_engine(DATABASE_URL, echo=_sql_echo)
+
+    # Direct db.*.supabase.co + PostgREST: app never uses this engine for requests (get_repo uses HTTP).
+    if _use_ipv4_hostaddr_for_postgres() and use_supabase_runtime():
+        logger.warning(
+            "Supabase PostgREST is configured (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY): "
+            "SQLAlchemy engine is bound to sqlite:///:memory: so DATABASE_URL is not opened at import "
+            "(direct db.* often has no IPv4 from Railway). Auth and data use HTTPS. "
+            "Use Transaction pooler DATABASE_URL for Alembic or Celery SQLAlchemy paths."
+        )
+        return create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            echo=_sql_echo,
+        )
+
+    engine_kwargs: dict = {
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+        "pool_pre_ping": True,
+        "echo": _sql_echo,
+    }
     if _use_ipv4_hostaddr_for_postgres():
         try:
             engine_kwargs["connect_args"] = _postgres_ipv4_connect_args(DATABASE_URL)
@@ -96,18 +120,19 @@ elif "postgresql" in DATABASE_URL:
                 make_url(DATABASE_URL).host,
             )
         except OSError as e:
-            # Never fall back to default DNS here: db.*.supabase.co often resolves only to IPv6,
-            # and Railway cannot reach IPv6 → confusing login failures. Fail fast with a fix.
             raise RuntimeError(
                 "Cannot open Supabase direct Postgres URL from this host (IPv4 DNS/connection required). "
                 f"Details: {e}\n"
                 "Fix one of:\n"
-                "  • Supabase Dashboard → Connect → 'Transaction pooler' → use that URI in DATABASE_URL (port 6543).\n"
-                "  • Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (app uses HTTPS; no direct Postgres from Railway).\n"
-                "  • Or set DATABASE_IPV4_ONLY=false only if you use a hostname that resolves to reachable IPv4."
+                "  • Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (recommended on Railway).\n"
+                "  • Supabase Dashboard → Connect → 'Transaction pooler' → DATABASE_URL (port 6543).\n"
+                "  • DATABASE_IPV4_ONLY=false only if the host resolves to reachable IPv4."
             ) from e
 
-engine = create_engine(DATABASE_URL, **engine_kwargs)
+    return create_engine(DATABASE_URL, **engine_kwargs)
+
+
+engine = _build_engine()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
